@@ -1,0 +1,14 @@
+[build]
+  publish = "dist"
+  command = "npx expo export --platform web --output-dir dist"
+
+# Aplikasi ini adalah SPA (Single Page App) dengan client-side routing dari
+# React Navigation (bukan multi-halaman). Tanpa redirect ini, refresh browser
+# atau membuka tautan langsung ke halaman "dalam" (mis. bookmark/share link)
+# akan menghasilkan 404 dari Netlify karena file fisik untuk rute tersebut
+# memang tidak ada — semua rute harus diarahkan ke index.html agar React
+# Navigation yang menangani routing di sisi client.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

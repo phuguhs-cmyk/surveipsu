@@ -1,0 +1,19 @@
+# Aplikasi ini SPA (Single Page App) dengan client-side routing dari React
+# Navigation (bukan multi-halaman/expo-router static). Tanpa aturan ini, host
+# statis yang TIDAK otomatis fallback ke index.html untuk path yang bukan file
+# fisik (mis. Cloudflare Pages/Workers, GitHub Pages, S3, dst.) akan
+# mengembalikan 404 saat pengguna membuka rute "dalam" secara langsung (refresh
+# browser, bookmark, atau deep-link, mis. dibuka lewat WebView/TWA yang
+# menavigasi langsung ke sebuah path). Netlify sudah punya aturan setara di
+# `netlify.toml`; file ini melengkapi host statis lain yang MENDUKUNG format
+# `_redirects` gaya Netlify (Cloudflare Pages mendukungnya secara native).
+#
+# CATATAN CLOUDFLARE WORKERS (Workers Static Assets, BUKAN Cloudflare Pages):
+# file `_redirects` ini TIDAK dibaca oleh Workers Static Assets. Untuk domain
+# `*.workers.dev` yang dideploy lewat `wrangler` dengan binding `assets`, atur
+# `not_found_handling = "single-page-application"` pada konfigurasi
+# `[assets]` di `wrangler.toml`/`wrangler.jsonc` proyek Workers Anda, supaya
+# semua path yang tidak cocok file statis diarahkan ke `index.html` alih-alih
+# mengembalikan 404. Lihat https://developers.cloudflare.com/workers/static-assets/routing/
+# bagian "Single Page Application (SPA) routing".
+/*  /index.html  200
