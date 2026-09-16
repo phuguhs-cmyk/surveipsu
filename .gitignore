@@ -53,3 +53,5 @@ export_*.txt
 
 # misc local trigger files
 build_trigger.txt
+
+.vercel

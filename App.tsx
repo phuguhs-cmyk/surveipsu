@@ -124,9 +124,9 @@ function DesktopNavToolbar() {
 (TextInput as any).defaultProps.placeholderTextColor = theme.colors.textMuted;
 
 // Judul header kustom untuk seluruh layar (Android/iOS native header maupun
-// web): HANYA menampilkan nama unit kerja "Bidang Perumahan DPKPLH
-// Banjarnegara" (judul nama layar per-menu, mis. "Dashboard Admin", "Peta
-// Offline", dsb. SENGAJA tidak ditampilkan lagi di sini sesuai permintaan).
+// web): HANYA menampilkan nama unit kerja "DPKPLH Banjarnegara" (judul nama
+// layar per-menu, mis. "Dashboard Admin", "Peta Offline", dsb. SENGAJA tidak
+// ditampilkan lagi di sini sesuai permintaan).
 function ScreenHeaderTitle({ title }: { title: string }) {
   return (
     <View style={{ flexShrink: 1 }}>
@@ -135,7 +135,7 @@ function ScreenHeaderTitle({ title }: { title: string }) {
         numberOfLines={1}
         accessibilityLabel={title}
       >
-        Bidang Perumahan DPKPLH Banjarnegara
+        DPKPLH Banjarnegara
       </Text>
     </View>
   );
@@ -180,7 +180,16 @@ export default function App() {
             // paket" dari menu admin/surveyor), tetap pakai judul umum.
             const packageName = route.params?.packageName;
             const title = packageName ? `Peta Lokasi - ${packageName}` : 'Peta Lokasi Paket';
-            return { title, headerTitle: () => <ScreenHeaderTitle title={title} /> };
+            // "presentation: fullScreenModal" membuat layar peta terbuka
+            // menutupi SELURUH layar (mirip membuka kamera), bukan sekadar
+            // layar biasa di dalam stack — memberi ruang maksimal untuk
+            // melihat & menandai peta tanpa gangguan navigasi lain.
+            return {
+              title,
+              headerTitle: () => <ScreenHeaderTitle title={title} />,
+              presentation: 'fullScreenModal',
+              animation: 'slide_from_bottom',
+            };
           }}
         />
         <Stack.Screen

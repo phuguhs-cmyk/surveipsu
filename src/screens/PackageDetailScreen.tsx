@@ -185,7 +185,7 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
           style={styles.mapOpenButton}
           onPress={() => navigation.navigate('Map', { packageId, packageName, surveyorName })}
         >
-          <Text style={styles.mapOpenButtonText}>Lihat Peta & Anotasi</Text>
+          <Text style={styles.mapOpenButtonText}>🗺️ Lihat Peta & Anotasi</Text>
         </TouchableOpacity>
       </View>
 

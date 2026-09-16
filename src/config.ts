@@ -156,9 +156,12 @@ export const CONFIG = {
   // Style vector online; OpenFreeMap dipakai tanpa API key.
   ONLINE_VECTOR_STYLE_URL: buildOnlineVectorStyleUrl(),
   // Zoom maksimum untuk peta online vector/raster. Tidak memengaruhi jumlah
-  // tile yang diunduh oleh fitur peta offline.
+  // tile yang diunduh oleh fitur peta offline. Dinaikkan dari 19 ke 20 agar
+  // pengguna bisa memperbesar peta lebih dekat ke objek; provider tile
+  // (Esri/Carto/MapTiler) umumnya masih menyediakan data asli sampai level
+  // ini di sebagian besar area, jadi tampilan tetap tajam (bukan upscale).
   ONLINE_MAP_MIN_ZOOM: 9,
-  ONLINE_MAP_MAX_ZOOM: 19,
+  ONLINE_MAP_MAX_ZOOM: 20,
 
   // Akurasi GPS (meter) di atas ambang ini dianggap "kurang akurat" dan
   // surveyor akan diberi peringatan agar mencoba lagi di area terbuka,

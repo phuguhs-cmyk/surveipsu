@@ -69,7 +69,7 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
             })
           }
         >
-          <Text style={styles.cardLink}>Hapus Paket</Text>
+          <Text style={styles.cardLink}>Kelola Data (Edit/Hapus)</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -216,7 +216,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             style={styles.headerAction}
             onPress={() => navigation.navigate('Map', {})}
           >
-            <Text style={styles.manageUsersLink}>Lihat Peta</Text>
+            <Text style={styles.manageUsersLink}>🗺️ Lihat Peta</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerAction}

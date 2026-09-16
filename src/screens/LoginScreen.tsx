@@ -100,8 +100,8 @@ export default function LoginScreen({ navigation }: Props) {
         extraScrollHeight={24}
         extraHeight={100}
       >
-        <Text style={styles.orgName}>Bidang Perumahan DPKPLH Banjarnegara</Text>
-        <Text style={styles.title}>Survei Infrastruktur PSU</Text>
+        <Text style={styles.orgName}>DPKPLH Banjarnegara</Text>
+        <Text style={styles.title}>Survei PSU</Text>
         <Text style={styles.subtitle}>Masuk menggunakan akun surveyor atau administrator</Text>
 
         <TextInput

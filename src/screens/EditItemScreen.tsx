@@ -791,7 +791,7 @@ export default function EditItemScreen({ route, navigation }: Props) {
       )}
       {!readOnly && (
         <TouchableOpacity style={styles.secondaryButton} onPress={() => setMapPickerVisible(true)}>
-          <Text style={styles.secondaryButtonText}>🗺️ Pilih di Peta (Offline/Online)</Text>
+          <Text style={styles.secondaryButtonText}>🗺️ Pilih di Peta</Text>
         </TouchableOpacity>
       )}
 

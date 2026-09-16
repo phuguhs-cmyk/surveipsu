@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
-  StyleSheet, ActivityIndicator,
+  StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
@@ -69,7 +69,11 @@ export default function InfraTypeManagementScreen({ navigation }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+    >
       <Text style={styles.title}>Kelola Jenis Infrastruktur</Text>
 
       <Text style={styles.sectionLabel}>Jenis Bawaan (tidak dapat dihapus)</Text>
@@ -114,7 +118,7 @@ export default function InfraTypeManagementScreen({ navigation }: Props) {
           )}
         />
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

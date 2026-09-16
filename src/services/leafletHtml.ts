@@ -1,6 +1,12 @@
 ﻿import { LEAFLET_JS } from '../assets/leafletJs';
 import { LEAFLET_CSS } from '../assets/leafletCss';
+import { MAPLIBRE_GL_JS } from '../assets/maplibreGlJs';
+import { MAPLIBRE_GL_CSS } from '../assets/maplibreGlCss';
+import { PMTILES_JS } from '../assets/pmtilesJs';
+import { MAPLIBRE_GL_LEAFLET_JS } from '../assets/maplibreGlLeafletJs';
+import { GLYPHS_REGULAR_0_255_BASE64, GLYPHS_BOLD_0_255_BASE64 } from '../assets/offlineGlyphs';
 import { CONFIG } from '../config';
+
 
 export interface LeafletMarker {
   lat: number;
@@ -68,6 +74,18 @@ export interface BuildMapHtmlOptions {
   onlineTileUrlTemplate?: string;
   /** URL style MapLibre untuk mode vector online. */
   onlineVectorStyleUrl?: string;
+  /**
+   * URI lokal (`file://...`) dari file `.pmtiles` bawaan APK (lihat
+   * `src/services/pmtilesAsset.ts`), berisi peta vector OpenStreetMap
+   * (skema OpenMapTiles) hasil Planetiler. Jika diisi, sebuah mode peta
+   * TAMBAHAN "Peta Offline" ditampilkan di tombol mode (berdampingan dengan
+   * Peta/Satelit/Hybrid) yang merender data ini lewat MapLibre GL TANPA
+   * memerlukan koneksi internet sama sekali (berbeda dari mode "Peta" yang
+   * memakai tile online MapTiler/OpenFreeMap). Membutuhkan
+   * `pmtiles-js` (dimuat via CDN) untuk mendaftarkan protokol `pmtiles://`
+   * yang membaca file lokal via *range request* HTTP.
+   */
+  offlinePmtilesUri?: string;
   markers: LeafletMarker[];
   annotations: LeafletAnnotation[];
   /**
@@ -102,9 +120,12 @@ function buildHeadHtml(opts: BuildMapHtmlOptions): string {
   const layerFilterHtml = showLayerFilter
     ? `<div class="layerfilter" id="layerFilter"></div>`
     : '';
+  const offlinePmtilesButtonHtml = opts.offlinePmtilesUri
+    ? `\n  <button class="mode-btn" data-mode="offline">Peta Offline</button>`
+    : '';
   const mapModeButtonsInner = `<button class="mode-btn active" data-mode="street">Peta</button>
   <button class="mode-btn" data-mode="satellite">Satelit</button>
-  <button class="mode-btn" data-mode="hybrid">Hybrid</button>`;
+  <button class="mode-btn" data-mode="hybrid">Hybrid</button>${offlinePmtilesButtonHtml}`;
   // Saat toolbar gambar (Garis/Polygon/Kunci Peta) DAN tombol mode peta
   // (Peta/Satelit/Hybrid) sama-sama tampil, keduanya digabung ke satu
   // container flex-wrap yang sama. Sebelumnya masing-masing punya
@@ -131,14 +152,43 @@ function buildHeadHtml(opts: BuildMapHtmlOptions): string {
 </div>
 <div class="hint" id="hint">Ketuk peta untuk menambah titik. Tekan "Selesai &amp; Simpan" jika sudah cukup.</div>`
     : '';
+  // PENTING: kotak pencarian paket (`.searchbar`) dan tombol mode peta
+  // (`.mapmode`) SEBELUMNYA masing-masing memakai `position: absolute`
+  // dengan offset kanan tetap (`right: 60px` vs `right: 12px`), sehingga di
+  // lebar layar tertentu (mis. web desktop dengan 3 tombol mode + label
+  // panjang "Hybrid") kotak `.mapmode` melebar ke kiri dan MENIMPA kotak
+  // pencarian meski keduanya sudah diberi z-index sama. Sekarang keduanya
+  // digabung dalam SATU baris flex (`.topbar`) yang sama persis seperti pola
+  // `.toolbar` di atas: search box mengambil sisa ruang (`flex: 1`) dan
+  // tombol mode peta tidak pernah tumpang tindih karena posisinya statis
+  // relatif terhadap flex row (bukan `position: absolute` independen lagi).
   const searchBoxHtml = packageSearchEnabled
     ? `<div class="searchbar">
   <input id="pkgSearch" type="text" placeholder="Cari nama paket pekerjaan..." autocomplete="off" />
 </div>`
     : '';
-  const vectorHead = opts.onlineVectorStyleUrl
-    ? `<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  const topBarHtml =
+    searchBoxHtml || mapModeHtml
+      ? `<div class="topbar">
+  ${searchBoxHtml}
+  ${mapModeHtml}
+</div>`
+      : '';
+
+  const needsMapLibre = !!(opts.onlineVectorStyleUrl || opts.offlinePmtilesUri);
+  // MapLibre GL, plugin maplibre-gl-leaflet, dan pmtiles-js DISEMATKAN
+  // LANGSUNG (bukan dimuat dari CDN unpkg.com) supaya mode "Peta Offline"
+  // benar-benar berfungsi tanpa koneksi internet sama sekali — sebelumnya
+  // ketiga skrip ini dimuat lewat <script src="https://unpkg.com/...">,
+  // sehingga di perangkat tanpa internet skrip tsb GAGAL dimuat dan mode
+  // "Peta Offline" tidak pernah bisa merender apa pun.
+  const pmtilesScript = opts.offlinePmtilesUri
+    ? `<script>${PMTILES_JS}</script>`
+    : '';
+  const vectorHead = needsMapLibre
+    ? `<style>${MAPLIBRE_GL_CSS}</style>
+<script>${MAPLIBRE_GL_JS}</script>
+${pmtilesScript}
 <style>${LEAFLET_CSS}</style>`
     : `<style>${LEAFLET_CSS}</style>`;
   // Plugin maplibre-gl-leaflet MEMBUTUHKAN `L` (Leaflet) sudah dimuat
@@ -146,9 +196,10 @@ function buildHeadHtml(opts: BuildMapHtmlOptions): string {
   // `LEAFLET_JS` baru disematkan di <body> (bukan <head>). Karena itu
   // script plugin ini dimuat SETELAH `${'${LEAFLET_JS}'}` di bawah, bukan
   // digabung ke `vectorHead` yang berada di <head>.
-  const vectorPluginScript = opts.onlineVectorStyleUrl
-    ? `<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.js"></script>`
+  const vectorPluginScript = needsMapLibre
+    ? `<script>${MAPLIBRE_GL_LEAFLET_JS}</script>`
     : '';
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -164,10 +215,11 @@ ${vectorHead}
   .toolbar .mode-btn { background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,.4); box-shadow: none; }
   .toolbar .mode-btn.active { background: #2563eb; border-color: #2563eb; }
   .hint { position: absolute; bottom: 10px; left: 10px; right: 10px; z-index: 1000; background: rgba(15,23,42,0.85); color: #fff; padding: 8px 12px; border-radius: 8px; font-size: 12px; text-align: center; display: none; }
-  .searchbar { position: absolute; top: 10px; left: 88px; right: 60px; z-index: 1000; }
+  .topbar { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 1000; display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+  .searchbar { flex: 1 1 200px; min-width: 0; }
   .searchbar input { width: 100%; box-sizing: border-box; border: none; border-radius: 8px; padding: 10px 14px; font-size: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
-  .mapmode { position: absolute; top: 12px; right: 12px; z-index: 1000; display: flex; gap: 6px; background: rgba(15, 23, 42, 0.8); padding: 6px; border-radius: 10px; }
-  .mode-btn { background: transparent; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700; }
+  .mapmode { flex: 0 0 auto; display: flex; gap: 6px; background: rgba(15, 23, 42, 0.8); padding: 6px; border-radius: 10px; }
+  .mode-btn { background: transparent; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
   .mode-btn.active { background: #2563eb; border-color: #2563eb; }
   .layerfilter { position: absolute; bottom: 10px; left: 10px; z-index: 1000; background: rgba(255,255,255,0.95); border-radius: 10px; padding: 8px 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); font-size: 12px; max-width: 60%; max-height: 40%; overflow-y: auto; }
   .layerfilter .lf-title { font-weight: 700; color: #0f172a; margin-bottom: 4px; }
@@ -180,8 +232,7 @@ ${vectorHead}
 </head>
 <body>
 <div id="map"></div>
-${searchBoxHtml}
-${mapModeHtml}
+${topBarHtml}
 ${toolbarHtml}
 ${layerFilterHtml}
 <script>${LEAFLET_JS}</script>
@@ -258,9 +309,178 @@ function buildScript(
 `;
 
   const vectorStyleUrl = opts.onlineVectorStyleUrl || '';
+  const offlinePmtilesUri = opts.offlinePmtilesUri || '';
+  // Style OpenMapTiles minimal (skema yang dipakai Planetiler) untuk
+  // menampilkan jalan, air, bangunan, area hijau, dan label tempat dari
+  // file PMTiles lokal, TANPA memerlukan glyph/sprite server online — label
+  // (nama jalan, tempat, POI) memakai glyph SDF yang disematkan LANGSUNG di
+  // JS bundle (base64, dari GLYPHS_REGULAR_0_255_BASE64/GLYPHS_BOLD_0_255_BASE64
+  // di src/assets/offlineGlyphs.ts) dan dilayani lewat protocol kustom
+  // 'offlineglyph://' sehingga label tetap muncul walau tidak ada internet.
+  const glyphsRegularB64 = GLYPHS_REGULAR_0_255_BASE64;
+  const glyphsBoldB64 = GLYPHS_BOLD_0_255_BASE64;
+  const offlineStyleScript = offlinePmtilesUri
+    ? `
+  var offlinePmtilesUri = ${JSON.stringify(offlinePmtilesUri)};
+  var offlineStreetLayer = null;
+  if (window.pmtiles && window.maplibregl && window.L && typeof L.maplibreGL === 'function') {
+    try {
+      // Daftarkan sumber GLYPH (font SDF) offline: MapLibre GL meminta
+      // glyph lewat URL berpola 'offlineglyph://{fontstack}/{range}.pbf',
+      // kita layani dari base64 yang sudah disematkan di JS bundle (bukan
+      // dari jaringan/file), memakai varian Bold jika nama font memuat kata
+      // "Bold", selain itu varian Regular. Hanya rentang 0-255 (Latin dasar
+      // + Latin-1 Supplement) yang disematkan — cukup untuk nama tempat di
+      // Indonesia (huruf Latin biasa/beraksen).
+      function base64ToArrayBuffer(base64) {
+        var binary = atob(base64);
+        var len = binary.length;
+        var bytes = new Uint8Array(len);
+        for (var i = 0; i < len; i++) { bytes[i] = binary.charCodeAt(i); }
+        return bytes.buffer;
+      }
+      var glyphsRegularBuffer = base64ToArrayBuffer(${JSON.stringify(glyphsRegularB64)});
+      var glyphsBoldBuffer = base64ToArrayBuffer(${JSON.stringify(glyphsBoldB64)});
+      maplibregl.addProtocol('offlineglyph', function (params, callback) {
+        var isBold = /bold/i.test(params.url);
+        callback(null, isBold ? glyphsBoldBuffer : glyphsRegularBuffer, null, null);
+        return { cancel: function () {} };
+      });
+      var pmtilesProtocol = new pmtiles.Protocol();
+      maplibregl.addProtocol('pmtiles', pmtilesProtocol.tile);
+      var pmSourceUrl = 'pmtiles://' + offlinePmtilesUri;
+      // PENTING: JANGAN biarkan pmtiles-js membuat sumber datanya sendiri
+      // dari string URL (FetchSource) — implementasi tsb membaca file lewat
+      // *HTTP Range request* (header \"Range\") via fetch(), yang TIDAK
+      // didukung oleh WebView Android/iOS untuk skema file://. Akibatnya
+      // setiap pembacaan ubin gagal secara ASINKRON (tidak tertangkap oleh
+      // try/catch sinkron di sini) sehingga mode \"Peta Offline\" tampak
+      // aktif (tombol berubah) tapi peta tetap kosong/tidak pernah tampil,
+      // tanpa error yang terlihat oleh pengguna. Untuk menghindarinya, file
+      // PMTiles dibaca UTUH sekali via XMLHttpRequest SINKRON (aman karena
+      // file lokal & hanya dijalankan sekali saat peta disiapkan), disimpan
+      // sebagai ArrayBuffer di memori, lalu setiap permintaan byte-range
+      // dilayani dengan slicing ArrayBuffer tsb di memori (tanpa request
+      // jaringan/berkas sama sekali).
+      var pmXhr = new XMLHttpRequest();
+      pmXhr.open('GET', offlinePmtilesUri, false);
+      pmXhr.responseType = 'arraybuffer';
+      pmXhr.send(null);
+      var pmFileBuffer = pmXhr.response;
+      if (!pmFileBuffer || !pmFileBuffer.byteLength) {
+        throw new Error('Gagal membaca file PMTiles offline (status ' + pmXhr.status + ')');
+      }
+      var pmInMemorySource = {
+        getKey: function () { return offlinePmtilesUri; },
+        getBytes: function (offset, length) {
+          return Promise.resolve({ data: pmFileBuffer.slice(offset, offset + length) });
+        },
+      };
+      pmtilesProtocol.add(new pmtiles.PMTiles(pmInMemorySource));
+      // Style diperkaya (bukan hanya garis/isian dasar) supaya semirip mungkin
+      // dengan peta pada umumnya (mis. Google Maps) walau tetap 100% offline:
+      // - Jalan diberi warna & ketebalan BERBEDA per kelas (motorway/trunk s.d.
+      //   jalan kecil/setapak), lengkap dengan "casing" (garis pinggir) supaya
+      //   terlihat seperti jalan aspal sungguhan, bukan garis polos.
+      // - Label NAMA JALAN ditampilkan mengikuti bentuk jalan (symbol-placement
+      //   'line') dari layer 'transportation_name'.
+      // - Titik POI (source-layer 'poi') ditampilkan sebagai bulatan kecil +
+      //   label nama, mirip penanda tempat penting di Google Maps.
+      // - Area taman/hutan (park) & nomor rumah (housenumber) ditambahkan.
+      // - Label KOTA/DESA (place) dibedakan ukurannya per tingkat penting
+      //   (class) supaya nama kota besar lebih menonjol dari dusun kecil.
+      // Semua field/kelas di bawah adalah skema STANDAR OpenMapTiles yang
+      // sudah tersedia di data 'banjarnegara.pmtiles' (dibuat via Planetiler),
+      // sehingga tidak perlu regenerasi data, cukup memperkaya cara render.
+      var roadColor = ['match', ['get', 'class'],
+        ['motorway'], '#f59e0b',
+        ['trunk'], '#fb923c',
+        ['primary'], '#fbbf24',
+        ['secondary'], '#fde68a',
+        ['tertiary'], '#ffffff',
+        ['minor', 'service'], '#ffffff',
+        ['track', 'path'], '#c9b48c',
+        '#e5e7eb'
+      ];
+      var roadCaseColor = ['match', ['get', 'class'],
+        ['motorway'], '#c2740a',
+        ['trunk'], '#c2650a',
+        ['primary'], '#b8860b',
+        ['secondary'], '#d1b46a',
+        ['tertiary', 'minor', 'service'], '#9ca3af',
+        ['track', 'path'], '#a08a63',
+        '#9ca3af'
+      ];
+      var roadWidth = ['interpolate', ['linear'], ['zoom'],
+        5, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 0.6, 0.2],
+        11, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 2, ['secondary', 'tertiary'], 1, 0.5],
+        14, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 5, ['secondary', 'tertiary'], 3, ['track', 'path'], 1, 1.5],
+        18, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 16, ['secondary', 'tertiary'], 11, ['track', 'path'], 3, 7]
+      ];
+      var roadCaseWidth = ['interpolate', ['linear'], ['zoom'],
+        5, 0.9,
+        11, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 3, ['secondary', 'tertiary'], 1.6, 0.8],
+        14, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 7, ['secondary', 'tertiary'], 4.5, 2.2],
+        18, ['match', ['get', 'class'], ['motorway', 'trunk', 'primary'], 20, ['secondary', 'tertiary'], 14, 9]
+      ];
+
+      var offlineStyle = {
+        version: 8,
+        glyphs: 'offlineglyph://fonts/{fontstack}/{range}.pbf',
+        sources: {
+          openmaptiles: { type: 'vector', url: pmSourceUrl },
+        },
+        layers: [
+          { id: 'background', type: 'background', paint: { 'background-color': '#f2efe9' } },
+          { id: 'landcover', type: 'fill', source: 'openmaptiles', 'source-layer': 'landcover', paint: { 'fill-color': '#d8e8c8', 'fill-opacity': 0.5 } },
+          { id: 'landuse', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', paint: { 'fill-color': '#e6e0d4', 'fill-opacity': 0.6 } },
+          { id: 'park', type: 'fill', source: 'openmaptiles', 'source-layer': 'park', paint: { 'fill-color': '#c8e6b0', 'fill-opacity': 0.55 } },
+          { id: 'water', type: 'fill', source: 'openmaptiles', 'source-layer': 'water', paint: { 'fill-color': '#a0c8f0' } },
+          { id: 'waterway', type: 'line', source: 'openmaptiles', 'source-layer': 'waterway', paint: { 'line-color': '#a0c8f0', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 16, 3] } },
+          { id: 'building', type: 'fill', source: 'openmaptiles', 'source-layer': 'building', minzoom: 12, paint: { 'fill-color': '#d9d0c3', 'fill-outline-color': '#c2b8a8' } },
+          { id: 'road-case', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', filter: ['!=', ['get', 'class'], 'path'], paint: { 'line-color': roadCaseColor, 'line-width': roadCaseWidth }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
+          { id: 'road-fill', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', paint: { 'line-color': roadColor, 'line-width': roadWidth, 'line-dasharray': ['case', ['==', ['get', 'class'], 'path'], ['literal', [2, 1.5]], ['literal', [1, 0]]] }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
+          { id: 'boundary', type: 'line', source: 'openmaptiles', 'source-layer': 'boundary', filter: ['<=', ['get', 'admin_level'], 8], paint: { 'line-color': '#9a7a5a', 'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 1.5], 'line-dasharray': [3, 2] } },
+          { id: 'housenumber', type: 'symbol', source: 'openmaptiles', 'source-layer': 'housenumber', minzoom: 18, layout: { 'text-field': ['get', 'housenumber'], 'text-size': 9, 'text-font': ['Klokantech Noto Sans Regular'] }, paint: { 'text-color': '#8a7a63', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
+          { id: 'poi', type: 'circle', source: 'openmaptiles', 'source-layer': 'poi', minzoom: 14, paint: { 'circle-radius': 3, 'circle-color': '#ef4444', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } },
+          { id: 'poi-label', type: 'symbol', source: 'openmaptiles', 'source-layer': 'poi', minzoom: 15, layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-font': ['Klokantech Noto Sans Regular'] }, paint: { 'text-color': '#7c2d12', 'text-halo-color': '#fff', 'text-halo-width': 1.2 } },
+          { id: 'road-label', type: 'symbol', source: 'openmaptiles', 'source-layer': 'transportation_name', minzoom: 13, layout: { 'symbol-placement': 'line', 'text-field': ['get', 'name'], 'text-size': 11, 'text-letter-spacing': 0.05, 'text-font': ['Klokantech Noto Sans Regular'] }, paint: { 'text-color': '#555', 'text-halo-color': '#fff', 'text-halo-width': 1.4 } },
+          { id: 'place', type: 'symbol', source: 'openmaptiles', 'source-layer': 'place', layout: {
+              'text-field': ['get', 'name'],
+              'text-size': ['match', ['get', 'class'], ['city', 'town'], 16, ['village'], 13, 11],
+              'text-font': ['Klokantech Noto Sans Bold'],
+            }, paint: { 'text-color': '#333', 'text-halo-color': '#fff', 'text-halo-width': 1.4 } },
+
+        ],
+      };
+
+      offlineStreetLayer = L.maplibreGL({ style: offlineStyle, attribution: '&copy; OpenMapTiles &copy; OpenStreetMap contributors' });
+    } catch (e) {
+      offlineStreetLayer = null;
+    }
+  }
+`
+    : '';
+
   const switchModeScript = opts.onlineTileUrlTemplate || opts.mapMode
     ? `
+  // PENTING: SELURUH inisialisasi mode peta (termasuk MapLibre GL untuk mode
+  // "Peta"/street vector) dibungkus dalam SATU try/catch besar di bawah ini.
+  // Sebelumnya, jika terjadi error SINKRON di sini (mis. WebGL/worker gagal
+  // diinisialisasi MapLibre GL di dalam sandbox <iframe srcDoc> versi web —
+  // berbeda perilakunya dari WebView native), exception tsb TIDAK tertangkap
+  // dan menghentikan EKSEKUSI SISA SKRIP ini sepenuhnya (satu tag <script>
+  // dieksekusi sekuensial atas-ke-bawah; exception tak tertangani membatalkan
+  // sisanya). Akibatnya kode render marker/titik lokasi, kotak pencarian, dan
+  // panel filter layer (semuanya ditulis SETELAH blok ini) tidak pernah
+  // jalan — bug: mode "Peta" (street) blank DAN titik koordinat/marker sama
+  // sekali tidak muncul di web, padahal mode "Satelit" (raster biasa, tanpa
+  // MapLibre GL) tetap normal. Dengan try/catch ini, kegagalan apa pun di
+  // sini tidak akan pernah menghalangi render marker & fitur peta lainnya.
+  try {
+${offlineStyleScript}
   var streetRasterLayer = L.tileLayer(${JSON.stringify(streetUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Carto' });
+
   var streetVectorStyleUrl = ${JSON.stringify(vectorStyleUrl)};
   var streetLayer = streetRasterLayer;
   if (streetVectorStyleUrl && window.L && typeof L.maplibreGL === 'function') {
@@ -309,6 +529,9 @@ function buildScript(
       L.tileLayer(${JSON.stringify(hybridLabelUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Carto' })
     ])
   };
+  if (typeof offlineStreetLayer !== 'undefined' && offlineStreetLayer) {
+    modeLayers.offline = offlineStreetLayer;
+  }
 
   function activateMapMode(mode) {
     Object.keys(modeLayers).forEach(function (key) {
@@ -318,22 +541,40 @@ function buildScript(
     try {
       nextLayer.addTo(map);
     } catch (e) {
-      // Layer vector gagal ditambahkan (mis. style.json gagal diunduh):
-      // jatuh ke raster street sebagai pengaman terakhir.
-      if (nextLayer === modeLayers.street && streetLayer !== streetRasterLayer) {
+      // Layer vector gagal ditambahkan (mis. style.json gagal diunduh, atau
+      // file PMTiles offline belum tersalin): jatuh ke raster street sebagai
+      // pengaman terakhir.
+      if (streetLayer !== streetRasterLayer) {
         modeLayers.street = streetRasterLayer;
-        streetRasterLayer.addTo(map);
+      } else {
+        modeLayers.street = streetLayer;
       }
+      streetRasterLayer.addTo(map);
+      document.querySelectorAll('.mode-btn').forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.mode === 'street');
+      });
+      return;
     }
     document.querySelectorAll('.mode-btn').forEach(function (btn) {
       btn.classList.toggle('active', btn.dataset.mode === mode);
     });
   }
 
+
   activateMapMode(${JSON.stringify(mapMode)});
   document.querySelectorAll('.mode-btn').forEach(function (btn) {
     btn.addEventListener('click', function () { activateMapMode(btn.dataset.mode); });
   });
+  } catch (e) {
+    // Kegagalan tak terduga saat inisialisasi mode peta (mis. MapLibre GL
+    // gagal total): pastikan minimal satu layer raster street tampil supaya
+    // peta tidak benar-benar kosong, dan JANGAN lempar ulang exception agar
+    // kode render marker di bawah tetap berjalan.
+    try {
+      var fallbackLayer = L.tileLayer(${JSON.stringify(streetUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Carto' });
+      fallbackLayer.addTo(map);
+    } catch (e3) {}
+  }
 `
     : '';
 
@@ -663,10 +904,11 @@ export function buildPickerMapHtml(opts: BuildPickerMapHtmlOptions): string {
   const streetUrl = CONFIG.ONLINE_MAP_MODES.street.tileUrlTemplate;
   const satelliteUrl = CONFIG.ONLINE_MAP_MODES.satellite.tileUrlTemplate;
   const labelUrl = CONFIG.ONLINE_MAP_MODES.hybrid.labelTileUrlTemplate;
+  const pickerMaxZoom = opts.maxOnlineZoom ?? 19;
   const baseLayers = `
-    var streetLayer = L.tileLayer(${JSON.stringify(streetUrl)}, { maxZoom: 19, attribution: '&copy; Carto' });
-    var satelliteLayer = L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: 19, attribution: '&copy; Esri' });
-    var labelLayer = L.tileLayer(${JSON.stringify(labelUrl)}, { maxZoom: 19, attribution: '&copy; Carto' });
+    var streetLayer = L.tileLayer(${JSON.stringify(streetUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Carto' });
+    var satelliteLayer = L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Esri' });
+    var labelLayer = L.tileLayer(${JSON.stringify(labelUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Carto' });
     var modeLayers = {
       street: streetLayer,
       satellite: satelliteLayer,
@@ -763,7 +1005,7 @@ export function buildPickerMapHtml(opts: BuildPickerMapHtmlOptions): string {
 `
     : `
   L.tileLayer(${JSON.stringify(opts.onlineTileUrlTemplate || '')}, {
-    tileSize: 256, maxZoom: 19,
+    tileSize: 256, maxZoom: ${opts.maxOnlineZoom ?? 19},
     attribution: '&copy; OpenStreetMap contributors',
   }).addTo(map);
 `;

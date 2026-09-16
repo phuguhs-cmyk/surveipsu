@@ -50,7 +50,7 @@ const PublicPackageCard = memo(function PublicPackageCard({
           })
         }
       >
-        <Text style={styles.mapLinkText}>Lihat Peta Lokasi</Text>
+        <Text style={styles.mapLinkText}>🗺️ Lihat Peta Lokasi</Text>
       </TouchableOpacity>
     </View>
   );

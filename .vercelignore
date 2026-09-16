@@ -1,0 +1,11 @@
+node_modules
+android
+.expo
+dist
+*.apk
+*.aab
+*.log
+*.txt
+/map-data
+/test
+.git

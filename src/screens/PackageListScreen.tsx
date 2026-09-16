@@ -253,7 +253,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
             <Text style={styles.link}>+ Buat Paket</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('Map', {})}>
-            <Text style={styles.link}>Lihat Peta</Text>
+            <Text style={styles.link}>🗺️ Lihat Peta</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.refreshButton} onPress={() => { void loadPackages(); }} disabled={loading}>
             <Text style={styles.refreshButtonText}>{loading ? '⏳' : '↻'}</Text>

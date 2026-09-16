@@ -1683,7 +1683,7 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
           )}
         </TouchableOpacity>
         <TouchableOpacity style={[styles.secondaryButton, styles.mapPickerButton]} onPress={() => setMapPickerVisible(true)}>
-          <Text style={styles.secondaryButtonText}>🗺️ Pilih di Peta (Offline/Online)</Text>
+          <Text style={styles.secondaryButtonText}>🗺️ Pilih di Peta</Text>
         </TouchableOpacity>
         {location && (
           <Text style={styles.locationText}>

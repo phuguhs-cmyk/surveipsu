@@ -1,13 +1,16 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Modal, TextInput, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Modal, TextInput, Platform, KeyboardAvoidingView } from 'react-native';
 import { Alert } from '../utils/alert';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import * as FileSystem from 'expo-file-system/legacy';
+import { getOfflinePmtilesLocalUri } from '../services/pmtilesAsset';
+
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { getPackageById, getPackages, buildPackageMapMarkers } from '../services/packageService';
 import { fetchSurveyList } from '../services/apiService';
+import { getQueue } from '../services/queueService';
 import { CONFIG } from '../config';
 import { buildMapHtml, LeafletMarker, LeafletAnnotation } from '../services/leafletHtml';
 import { parseCoordinate } from '../services/commonUtils';
@@ -18,7 +21,6 @@ import {
   removePackageAnnotation,
   syncPackageAnnotationsFromServer,
   updatePackageAnnotationLabel,
-  buildAnnotationLabelFromSegment,
   pickPreferredSegmentLocationLabel,
   getLocationLabelChoices,
   MapAnnotation,
@@ -164,6 +166,10 @@ export default function MapScreen({ route }: Props) {
   // Mode anotasi (gambar garis/polygon) hanya tersedia untuk peta SATU
   // paket; peta "semua paket" selalu read-only.
   const [annotateMode, setAnnotateMode] = useState(false);
+  // Panel "Fitur peta" (legend) disembunyikan secara default agar tampilan
+  // peta memenuhi layar penuh (mirip layar kamera), bisa dibuka lewat
+  // tombol "?" bila pengguna butuh bantuan.
+  const [legendVisible, setLegendVisible] = useState(false);
   const canAnnotate = !isAllPackages;
 
   const [labelModalVisible, setLabelModalVisible] = useState(false);
@@ -171,6 +177,16 @@ export default function MapScreen({ route }: Props) {
   const [labelChoices, setLabelChoices] = useState<string[]>([]);
   const [pendingShape, setPendingShape] = useState<{ type: 'polyline' | 'polygon'; points: { lat: number; lng: number }[] } | null>(null);
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  // Daftar SEMUA "Alamat/Keterangan Lokasi" milik paket ini, TERLEPAS dari
+  // apakah baris survei tersebut punya koordinat GPS valid atau tidak.
+  // SENGAJA dipisah dari `surveyedLocations` (yang dipakai untuk menaruh
+  // penanda/marker di peta dan MEMANG harus difilter agar hanya punya
+  // koordinat valid) — karena pilihan label anotasi tidak butuh koordinat
+  // sama sekali. Sebelumnya kedua kebutuhan ini memakai array yang sama,
+  // sehingga survei yang disimpan TANPA GPS (mis. sinyal lemah/GPS
+  // dimatikan) kehilangan alamat/keterangan lokasinya dari daftar pilihan
+  // chip di modal label anotasi, padahal datanya sudah benar tersimpan.
+  const [allLocationNotes, setAllLocationNotes] = useState<string[]>([]);
 
   const loadSurveyedLocations = useCallback(async (): Promise<SurveyedLocation[]> => {
     try {
@@ -193,8 +209,32 @@ export default function MapScreen({ route }: Props) {
         return locations;
       }
 
-      const rows = await fetchSurveyList(undefined, packageId);
-      const locations: SurveyedLocation[] = rows
+      const rows = await fetchSurveyList(undefined, packageId).catch(() => []);
+      // Gabungkan juga survei yang BELUM terkirim (masih di antrian offline)
+      // supaya pilihan label (alamat/keterangan lokasi) tetap muncul walau
+      // survei belum tersinkron ke server — sebelumnya jika semua survei di
+      // paket ini masih berstatus "Belum Dikirim"/offline, `fetchSurveyList`
+      // mengembalikan array kosong sehingga tidak ada satu pun lokasi yang
+      // bisa dipilih di modal label anotasi.
+      const queueRows = (await getQueue())
+        .filter((item) => item.data?.packageId === packageId)
+        .map((item) => ({
+          Latitude: item.data?.latitude,
+          Longitude: item.data?.longitude,
+          'Tipe Infrastruktur': item.data?.infrastructureType || '-',
+          'Alamat/Keterangan Lokasi': item.data?.locationNote || '',
+        }));
+      const combinedRows = [...rows, ...queueRows];
+      // PENTING: kumpulkan alamat/keterangan lokasi dari SEMUA baris survei
+      // paket ini (termasuk yang belum/tidak punya koordinat GPS valid),
+      // agar tidak ada satu pun catatan lokasi yang hilang dari pilihan
+      // label anotasi hanya karena baris tersebut tidak memiliki GPS.
+      const locationNotes = combinedRows
+        .map((row) => String(row['Alamat/Keterangan Lokasi'] || '').trim())
+        .filter((note) => note.length > 0);
+      setAllLocationNotes(locationNotes);
+
+      const locations: SurveyedLocation[] = combinedRows
         .filter((row) => parseCoordinate(row['Latitude']) != null && parseCoordinate(row['Longitude']) != null)
         .map((row) => ({
           lat: parseCoordinate(row['Latitude'])!,
@@ -202,6 +242,7 @@ export default function MapScreen({ route }: Props) {
           infrastructureType: row['Tipe Infrastruktur'] || '-',
           locationNote: row['Alamat/Keterangan Lokasi'] || '',
         }));
+
 
       setSurveyedLocations(locations);
       setLocationsError(locations.length === 0 ? 'Belum ada titik lokasi survei dengan koordinat GPS pada paket ini.' : null);
@@ -271,6 +312,18 @@ export default function MapScreen({ route }: Props) {
         ? currentAnnotations.map((a) => ({ id: a.id, type: a.type, points: a.points, color: a.color, label: a.label }))
         : [];
 
+      // Peta offline vector (PMTiles bawaan APK) hanya relevan di Android/
+      // iOS (native, punya `file://`); di web tidak ada APK/aset native
+      // sehingga diabaikan begitu saja (mode "Peta Offline" tidak tampil).
+      let offlinePmtilesUri: string | undefined;
+      if (Platform.OS !== 'web') {
+        try {
+          offlinePmtilesUri = await getOfflinePmtilesLocalUri();
+        } catch (err: any) {
+          console.warn('Gagal menyiapkan peta offline (PMTiles):', err?.message || err);
+        }
+      }
+
       const html = buildMapHtml({
         tileData: {},
         centerLat,
@@ -278,8 +331,22 @@ export default function MapScreen({ route }: Props) {
         zoom,
         minZoom: CONFIG.ONLINE_MAP_MIN_ZOOM,
         maxZoom: CONFIG.ONLINE_MAP_MAX_ZOOM,
+        // Saat mode gambar garis/polygon aktif, izinkan zoom EKSTRA (semu,
+        // hasil upscale tile terakhir) supaya titik-titik anotasi lebih
+        // mudah & presisi disentuh jari tanpa perlu tile tambahan.
+        drawZoomOvershoot: canAnnotate && annotateMode ? 3 : 0,
         onlineTileUrlTemplate: CONFIG.ONLINE_MAP_MODES.street.tileUrlTemplate,
-        onlineVectorStyleUrl: CONFIG.ONLINE_MAP_MODES.street.vectorStyleUrl,
+        // PENTING: di web, dokumen peta dimuat lewat `<iframe srcDoc>`
+        // (bukan WebView native), yang di beberapa browser/lingkungan
+        // sandbox membatasi WebGL/worker sehingga MapLibre GL (dipakai
+        // untuk mode "Peta"/street vector) gagal total secara ASINKRON —
+        // sebelumnya ini membuat mode "Peta" tampil BLANK di web (mode
+        // Satelit/Hybrid tetap normal karena raster biasa, tidak
+        // memerlukan WebGL). Untuk web, langsung pakai raster (Esri/Carto,
+        // sama seperti mode Satelit) yang terbukti stabil di iframe,
+        // bukan vector MapLibre GL.
+        onlineVectorStyleUrl: Platform.OS === 'web' ? undefined : CONFIG.ONLINE_MAP_MODES.street.vectorStyleUrl,
+        offlinePmtilesUri,
         mapMode: 'street',
         markers,
         annotations: leafletAnnotations,
@@ -342,8 +409,13 @@ export default function MapScreen({ route }: Props) {
       if (!canAnnotate || !packageId) return;
       try {
         if (msg.type === 'save_annotation') {
-          const suggestedLabel = getSuggestedAnnotationLabel(msg.points, surveyedLocations, packageName);
-          const choices = getLocationLabelChoices(surveyedLocations, packageName);
+          // Label anotasi HARUS berupa alamat/keterangan lokasi hasil survei
+          // (kolom "Alamat/Keterangan Lokasi"), BUKAN nama paket pekerjaan —
+          // karena itu `fallbackLabel` (nama paket) sengaja TIDAK dikirim di
+          // sini, supaya label hanya terisi jika memang ada titik lokasi
+          // survei terdekat dengan keterangan.
+          const suggestedLabel = getSuggestedAnnotationLabel(msg.points, surveyedLocations);
+          const choices = getLocationLabelChoices(allLocationNotes.map((note) => ({ locationNote: note })));
           setPendingShape({ type: msg.shapeType === 'polygon' ? 'polygon' : 'polyline', points: msg.points });
           setEditingAnnotationId(null);
           setLabelChoices(choices);
@@ -355,7 +427,7 @@ export default function MapScreen({ route }: Props) {
         } else if (msg.type === 'edit_annotation_label') {
           const currentAnnotations = await getPackageAnnotations(packageId);
           const target = currentAnnotations.find((a) => a.id === msg.id);
-          const choices = getLocationLabelChoices(surveyedLocations, packageName);
+          const choices = getLocationLabelChoices(allLocationNotes.map((note) => ({ locationNote: note })));
           setPendingShape(null);
           setEditingAnnotationId(msg.id);
           setLabelChoices(choices);
@@ -366,7 +438,7 @@ export default function MapScreen({ route }: Props) {
         // Pesan tidak dikenali/tidak valid: diabaikan.
       }
     },
-    [canAnnotate, packageId, surveyedLocations, packageName, rebuildMapHtml]
+    [canAnnotate, packageId, surveyedLocations, allLocationNotes, packageName, rebuildMapHtml]
   );
 
   const handleWebViewMessage = useCallback(
@@ -405,8 +477,19 @@ export default function MapScreen({ route }: Props) {
 
   const confirmLabelModal = useCallback(async () => {
     if (!packageId) return;
-    const detailLabel = pendingShape ? getSuggestedAnnotationLabel(pendingShape.points, surveyedLocations, packageName) : undefined;
-    const label = buildAnnotationLabelFromSegment(labelInputValue.trim(), packageName, detailLabel) || undefined;
+    // PENTING: nilai yang dipilih/diketik pengguna di modal (`labelInputValue`,
+    // baik lewat chip alamat/keterangan lokasi maupun ketikan manual) HARUS
+    // disimpan apa adanya. Sebelumnya nilai ini malah diproses ulang lewat
+    // `buildAnnotationLabelFromSegment` yang memilih label "paling sering
+    // muncul" antara nilai input & saran (`detailLabel`) â€” karena keduanya
+    // biasanya sama-sama muncul 1x, hasilnya bisa menimpa pilihan pengguna
+    // secara diam-diam (label yang tampil di modal tidak tersimpan). Sekarang
+    // fallback ke saran otomatis HANYA dipakai jika kolom benar-benar
+    // dikosongkan pengguna.
+    const trimmedInput = labelInputValue.trim();
+    const label = trimmedInput.length > 0
+      ? trimmedInput
+      : (pendingShape ? getSuggestedAnnotationLabel(pendingShape.points, surveyedLocations) : undefined);
     setLabelModalVisible(false);
     try {
       if (pendingShape) {
@@ -438,14 +521,6 @@ export default function MapScreen({ route }: Props) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>{isAllPackages ? 'Peta Lokasi Semua Paket' : 'Peta Lokasi Paket'}</Text>
-        {!isAllPackages && <Text style={styles.subtitle}>{packageName}</Text>}
-        <Text style={styles.subtitle}>
-          Peta dimuat langsung dari internet (perlu koneksi aktif) dan selalu menampilkan data terbaru.
-        </Text>
-      </View>
-
       <View style={styles.toolbar}>
         <TouchableOpacity
           style={styles.addButton}
@@ -454,10 +529,10 @@ export default function MapScreen({ route }: Props) {
             await initializeMap(locations);
           }}
         >
-          <Text style={styles.addButtonText}>↻ Muat Ulang Titik</Text>
+          <Text style={styles.addButtonText}>↻ Titik</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.addButton} onPress={() => initializeMap()} disabled={loading}>
-          <Text style={styles.addButtonText}>{loading ? 'Memproses...' : '↻ Muat Ulang Peta'}</Text>
+          <Text style={styles.addButtonText}>{loading ? '...' : '↻ Peta'}</Text>
         </TouchableOpacity>
         {canAnnotate && (
           <TouchableOpacity
@@ -465,20 +540,34 @@ export default function MapScreen({ route }: Props) {
             onPress={toggleAnnotateMode}
           >
             <Text style={styles.addButtonText}>
-              {annotateMode ? '✓ Mode Anotasi Aktif' : 'Mode Anotasi (Garis/Polygon)'}
+              {annotateMode ? '✓ Anotasi Aktif' : 'Mode Anotasi'}
             </Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={[styles.addButton, legendVisible && styles.addButtonActive]}
+          onPress={() => setLegendVisible((prev) => !prev)}
+        >
+          <Text style={styles.addButtonText}>{legendVisible ? '✕ Tutup Info' : 'ℹ️ Info'}</Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={styles.metaText}>
-        {locationsError
-          ? locationsError
-          : isAllPackages
-          ? `${surveyedLocations.length} paket pekerjaan ditemukan.`
-          : `${surveyedLocations.length} lokasi pekerjaan bertanda GPS ditemukan di paket ini.`}
-      </Text>
-
+      {legendVisible && (
+        <View style={styles.header}>
+          <Text style={styles.title}>{isAllPackages ? 'Peta Lokasi Semua Paket' : 'Peta Lokasi Paket'}</Text>
+          {!isAllPackages && <Text style={styles.subtitle}>{packageName}</Text>}
+          <Text style={styles.subtitle}>
+            Peta dimuat langsung dari internet (perlu koneksi aktif) dan selalu menampilkan data terbaru.
+          </Text>
+          <Text style={styles.metaText}>
+            {locationsError
+              ? locationsError
+              : isAllPackages
+              ? `${surveyedLocations.length} paket pekerjaan ditemukan.`
+              : `${surveyedLocations.length} lokasi pekerjaan bertanda GPS ditemukan di paket ini.`}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.mapCard}>
         {loading ? (
@@ -512,87 +601,112 @@ export default function MapScreen({ route }: Props) {
             onMessage={handleWebViewMessage}
             javaScriptEnabled
             domStorageEnabled
-            androidLayerType="software"
+            // PENTING: JANGAN set androidLayerType="software" di sini. Mode
+            // "Peta" (street) memakai MapLibre GL (vector, dirender lewat
+            // WebGL) untuk menampilkan basemap OpenStreetMap penuh — WebGL
+            // MEMBUTUHKAN hardware acceleration (layer GPU), sehingga jika
+            // WebView dipaksa memakai rendering software (seperti pada
+            // CoordinatePickerModal untuk tile Leaflet biasa), canvas
+            // MapLibre GL tetap KOSONG/BLANK meski mode Satelit/Hybrid
+            // (raster biasa) tetap tampil normal. Bug tile Leaflet terpotong
+            // yang tadinya diatasi androidLayerType="software" di layar lain
+            // sudah ditangani di sini lewat remount WebView (lihat
+            // `webviewKey` yang berubah setiap `rebuildMapHtml`), jadi
+            // software layer tidak diperlukan.
             allowFileAccess
             allowFileAccessFromFileURLs
             allowUniversalAccessFromFileURLs
             mixedContentMode="always"
             onError={(e) => console.warn('WebView error:', e.nativeEvent)}
             onHttpError={(e) => console.warn('WebView HTTP error:', e.nativeEvent)}
+            onRenderProcessGone={(e) => console.warn('WebView render process gone:', e.nativeEvent)}
           />
         )}
       </View>
       {canAnnotate && (
         <Modal visible={labelModalVisible} transparent animationType="fade" onRequestClose={cancelLabelModal}>
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>
-                {editingAnnotationId ? 'Ubah Label Anotasi' : 'Beri Label Anotasi'}
-              </Text>
-              <Text style={styles.modalSubtitle}>
-                Contoh: "Saluran Sekunder RT 03" atau "Rute Jalan Usulan". Boleh dikosongkan.
-              </Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Label/keterangan (opsional)"
-                value={labelInputValue}
-                onChangeText={setLabelInputValue}
-                autoFocus
-              />
-              {labelChoices.length > 0 && (
-                <View style={styles.choiceList}>
-                  {labelChoices.map((choice) => (
-                    <TouchableOpacity
-                      key={choice}
-                      style={[styles.choiceChip, labelInputValue === choice && styles.choiceChipSelected]}
-                      onPress={() => setLabelInputValue(choice)}
-                    >
-                      <Text style={[styles.choiceChipText, labelInputValue === choice && styles.choiceChipTextSelected]}>
-                        {choice}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+          <KeyboardAvoidingView
+            style={styles.modalBackdrop}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={0}
+          >
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>
+                  {editingAnnotationId ? 'Ubah Label Anotasi' : 'Beri Label Anotasi'}
+                </Text>
+                <Text style={styles.modalSubtitle}>
+                  Contoh: "Saluran Sekunder RT 03" atau "Rute Jalan Usulan". Boleh dikosongkan.
+                </Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Label/keterangan (opsional)"
+                  value={labelInputValue}
+                  onChangeText={setLabelInputValue}
+                  autoFocus
+                />
+                {labelChoices.length > 0 && (
+                  <View style={styles.choiceList}>
+                    {labelChoices.map((choice) => (
+                      <TouchableOpacity
+                        key={choice}
+                        style={[styles.choiceChip, labelInputValue === choice && styles.choiceChipSelected]}
+                        onPress={() => setLabelInputValue(choice)}
+                      >
+                        <Text style={[styles.choiceChipText, labelInputValue === choice && styles.choiceChipTextSelected]}>
+                          {choice}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={cancelLabelModal}>
+                    <Text style={styles.modalButtonSecondaryText}>Batal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={confirmLabelModal}>
+                    <Text style={styles.modalButtonPrimaryText}>Simpan</Text>
+                  </TouchableOpacity>
                 </View>
-              )}
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonSecondary]} onPress={cancelLabelModal}>
-                  <Text style={styles.modalButtonSecondaryText}>Batal</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={confirmLabelModal}>
-                  <Text style={styles.modalButtonPrimaryText}>Simpan</Text>
-                </TouchableOpacity>
               </View>
-            </View>
-          </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
-      <ScrollView style={styles.legend}>
-        <Text style={styles.legendTitle}>Fitur peta</Text>
-        <Text style={styles.legendItem}>• Peta dimuat langsung dari internet (tile online), sehingga selalu menampilkan basemap terkini. Diperlukan koneksi internet aktif.</Text>
-        <Text style={styles.legendItem}>• Peta mendukung cubit (pinch) zoom & geser (pan) dengan jari secara langsung di dalam tampilan peta.</Text>
-        {canAnnotate && (
-          <>
-            <Text style={styles.legendItem}>• Titik berwarna menandai lokasi asli (GPS) tiap item pekerjaan yang sudah disurvei, warna sesuai jenis infrastruktur.</Text>
-            <Text style={styles.legendItem}>• Aktifkan "Mode Anotasi" untuk menampilkan tombol "Garis"/"Polygon" di dalam peta, lalu ketuk peta untuk menambah titik dan tekan "Selesai &amp; Simpan".</Text>
-            <Text style={styles.legendItem}>• Setelah menekan "Selesai &amp; Simpan", isi label/keterangan pada anotasi (mis. nama saluran/rute) lalu tekan "Simpan".</Text>
-            <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat opsi ubah label atau hapus.</Text>
-          </>
-        )}
-        <Text style={styles.legendItem}>• Tekan "Muat Ulang Peta" jika ingin memuat ulang tampilan peta atau data terbaru.</Text>
-      </ScrollView>
+      {legendVisible && (
+        <ScrollView style={styles.legend}>
+          <Text style={styles.legendTitle}>Fitur peta</Text>
+          <Text style={styles.legendItem}>• Peta dimuat langsung dari internet (tile online), sehingga selalu menampilkan basemap terkini. Diperlukan koneksi internet aktif.</Text>
+          <Text style={styles.legendItem}>• Peta mendukung cubit (pinch) zoom & geser (pan) dengan jari secara langsung di dalam tampilan peta.</Text>
+          {canAnnotate && (
+            <>
+              <Text style={styles.legendItem}>• Titik berwarna menandai lokasi asli (GPS) tiap item pekerjaan yang sudah disurvei, warna sesuai jenis infrastruktur.</Text>
+              <Text style={styles.legendItem}>• Aktifkan "Mode Anotasi" untuk menampilkan tombol "Garis"/"Polygon" di dalam peta, lalu ketuk peta untuk menambah titik dan tekan "Selesai &amp; Simpan".</Text>
+              <Text style={styles.legendItem}>• Setelah menekan "Selesai &amp; Simpan", isi label/keterangan pada anotasi (mis. nama saluran/rute) lalu tekan "Simpan".</Text>
+              <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat opsi ubah label atau hapus.</Text>
+            </>
+          )}
+          <Text style={styles.legendItem}>• Tekan "Muat Ulang Peta" jika ingin memuat ulang tampilan peta atau data terbaru.</Text>
+        </ScrollView>
+      )}
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-    padding: 16,
+    padding: 8,
   },
   header: {
-    marginBottom: 12,
+    marginBottom: 8,
+    paddingHorizontal: 8,
   },
   title: {
     fontSize: 20,
@@ -636,8 +750,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     padding: 4,
-    marginBottom: 12,
-    height: 480,
+    marginBottom: 4,
+    flex: 1,
     overflow: 'hidden',
   },
   webview: {
@@ -661,6 +775,7 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     padding: 14,
     marginTop: 4,
+    maxHeight: 200,
   },
   legendTitle: {
     color: theme.colors.textPrimary,
@@ -675,6 +790,9 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.55)',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
