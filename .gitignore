@@ -55,3 +55,4 @@ export_*.txt
 build_trigger.txt
 
 .vercel
+.env*

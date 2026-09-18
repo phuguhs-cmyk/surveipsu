@@ -1,8 +1,9 @@
-import React, { useCallback, useRef, useState, memo } from 'react';
+import React, { useCallback, useMemo, useRef, useState, memo } from 'react';
 import {
   View,
   Text,
   FlatList,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -72,10 +73,18 @@ export default function PublicPackageListScreen({ navigation }: Props) {
   const [packages, setPackages] = useState<PublicPackageRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [visibleCount, setVisibleCount] = useState(LIST_PAGE_SIZE);
+  const [searchText, setSearchText] = useState('');
   const loadInFlightRef = useRef(false);
 
-  const visiblePackages = packages.slice(0, visibleCount);
-  const hasMorePackages = visibleCount < packages.length;
+  const filteredPackages = useMemo(() => {
+    const query = searchText.trim().toLowerCase();
+    if (!query) return packages;
+    return packages.filter((p) => p.packageName?.toLowerCase().includes(query));
+  }, [packages, searchText]);
+
+  const visiblePackages = filteredPackages.slice(0, visibleCount);
+  const hasMorePackages = visibleCount < filteredPackages.length;
+
 
   const loadPackages = useCallback(async () => {
     if (loadInFlightRef.current) return;
@@ -146,6 +155,19 @@ export default function PublicPackageListScreen({ navigation }: Props) {
         </TouchableOpacity>
       </View>
 
+      <TextInput
+        style={styles.searchInput}
+        placeholder="Cari nama paket pekerjaan..."
+        value={searchText}
+        onChangeText={setSearchText}
+        autoCapitalize="none"
+      />
+      {searchText.trim() ? (
+        <Text style={styles.searchResultText}>
+          {filteredPackages.length} dari {packages.length} paket ditemukan
+        </Text>
+      ) : null}
+
       {loading && packages.length === 0 ? (
         <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 24 }} />
       ) : (
@@ -160,16 +182,22 @@ export default function PublicPackageListScreen({ navigation }: Props) {
           updateCellsBatchingPeriod={50}
           onEndReached={() => {
             if (hasMorePackages && !loading) {
-              setVisibleCount((prev) => Math.min(prev + LIST_PAGE_SIZE, packages.length));
+              setVisibleCount((prev) => Math.min(prev + LIST_PAGE_SIZE, filteredPackages.length));
             }
           }}
           onEndReachedThreshold={0.3}
-          ListEmptyComponent={<Text style={styles.emptyText}>Belum ada paket pekerjaan.</Text>}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              {searchText.trim()
+                ? 'Tidak ada paket yang cocok dengan pencarian.'
+                : 'Belum ada paket pekerjaan.'}
+            </Text>
+          }
           ListFooterComponent={
             hasMorePackages ? (
               <TouchableOpacity
                 style={styles.loadMoreButton}
-                onPress={() => setVisibleCount((prev) => Math.min(prev + LIST_PAGE_SIZE, packages.length))}
+                onPress={() => setVisibleCount((prev) => Math.min(prev + LIST_PAGE_SIZE, filteredPackages.length))}
               >
                 <Text style={styles.loadMoreText}>Muat lebih</Text>
               </TouchableOpacity>
@@ -183,6 +211,7 @@ export default function PublicPackageListScreen({ navigation }: Props) {
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -217,6 +246,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#666',
     marginTop: 24,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+  },
+  searchResultText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginBottom: 8,
   },
   card: {
     backgroundColor: '#fff',
