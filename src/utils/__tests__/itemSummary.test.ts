@@ -4,7 +4,7 @@ describe('formatNum (via formatDimensionSummary)', () => {
   it('formats whole numbers without trailing zeros and rounds to 2 decimals', () => {
     const summary: ItemSummary = {
       itemId: 'x', label: 'x', totalLength: 100, avgWidth: 3, avgHeight: null,
-      freeformDimension: '', notes: '', rows: [],
+      freeformDimension: '', constructionType: '-', condition: '-', damageSummary: '-', notes: '', rows: [],
     };
     expect(formatDimensionSummary(summary)).toBe('P: 100 m, L: 3 m');
   });

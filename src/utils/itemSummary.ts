@@ -41,6 +41,44 @@ const DIMENSION_HEADERS: Record<string, { panjang: string[]; lebar: string[]; ti
   },
 };
 
+// Kolom sheet yang mewakili "Jenis Konstruksi" untuk tiap jenis infrastruktur
+// (nama field berbeda-beda: Jenis Perkerasan/Saluran/Konstruksi/Gorong-gorong).
+const CONSTRUCTION_HEADERS: Record<string, string> = {
+  'Jalan': 'Jenis Perkerasan',
+  'Drainase/Saluran Air': 'Jenis Saluran',
+  'Dinding Penahan Tanah (DPT)': 'Jenis Konstruksi',
+  'Gorong-gorong': 'Jenis Gorong-gorong',
+  'Jembatan': 'Jenis Konstruksi',
+};
+
+// Kolom "Kondisi" umum (sama nama kolomnya untuk semua jenis, termasuk yang
+// dinamis) — selalu diisi field terakhir "condition" pada EDIT_FIELDS.
+const CONDITION_HEADER = 'Kondisi';
+
+// Kolom sheet numerik ukuran kerusakan, khusus Jalan (lihat EDIT_FIELDS di
+// config.ts: damageLength/damageWidth/damageDepth).
+const JALAN_DAMAGE_HEADERS = {
+  length: 'Panjang Kerusakan (m)',
+  width: 'Lebar Kerusakan (m)',
+  depth: 'Kedalaman Kerusakan (cm)',
+};
+
+// Untuk jenis infrastruktur selain Jalan, "kerusakan" direpresentasikan
+// sebagai kondisi teknis spesifik (bukan ukuran numerik terpisah), mis.
+// Kondisi Sedimentasi (Drainase), Kondisi Kemiringan/Pergeseran (DPT), dst.
+const DAMAGE_TEXT_FIELDS: Record<string, { label: string; header: string }[]> = {
+  'Drainase/Saluran Air': [{ label: 'Sedimentasi', header: 'Kondisi Sedimentasi' }],
+  'Dinding Penahan Tanah (DPT)': [{ label: 'Kemiringan', header: 'Kondisi Kemiringan/Pergeseran' }],
+  'Gorong-gorong': [
+    { label: 'Masuk', header: 'Kondisi Saluran Masuk' },
+    { label: 'Keluar', header: 'Kondisi Saluran Keluar' },
+  ],
+  'Jembatan': [
+    { label: 'Struktur Atas', header: 'Kondisi Struktur Atas' },
+    { label: 'Struktur Bawah', header: 'Kondisi Struktur Bawah/Pondasi' },
+  ],
+};
+
 function toNum(v: any): number | null {
   if (v === undefined || v === null || v === '') return null;
   const n = parseFloat(String(v).replace(',', '.'));
@@ -104,6 +142,12 @@ export interface ItemSummary {
    * jenis infrastruktur dinamis (di luar 5 jenis tetap) yang tidak punya
    * kolom Panjang/Lebar/Tinggi baku. */
   freeformDimension: string;
+  /** Jenis konstruksi (mis. Jenis Perkerasan/Saluran/Konstruksi/Gorong-gorong), digabung jika berbeda antar segmen. */
+  constructionType: string;
+  /** Kondisi umum (field "condition"), digabung jika berbeda antar segmen. */
+  condition: string;
+  /** Ringkasan kerusakan: khusus Jalan berupa ukuran (P/L/D), jenis lain berupa kondisi teknis spesifik (mis. Sedimentasi/Kemiringan). */
+  damageSummary: string;
   notes: string;
   rows: any[];
 }
@@ -136,6 +180,9 @@ export function summarizeItemRows(itemId: string, type: string, rows: any[]): It
       avgWidth: null,
       avgHeight: null,
       freeformDimension: mergeDistinctText(rows.map((r) => r['Dimensi/Ukuran'])),
+      constructionType: mergeDistinctText(rows.map((r) => r['Material/Konstruksi'])),
+      condition: mergeDistinctText(rows.map((r) => r[CONDITION_HEADER])),
+      damageSummary: '-',
       notes: mergeDistinctText(rows.map((r) => r['Catatan Teknis'])),
       rows,
     };
@@ -179,6 +226,52 @@ export function summarizeItemRows(itemId: string, type: string, rows: any[]): It
     ? mergeDistinctText(rows.map((r) => r['Dimensi']))
     : '';
 
+  // Jenis Konstruksi & Kondisi: diambil dari kolom sheet yang sesuai (lihat
+  // CONSTRUCTION_HEADERS/CONDITION_HEADER di atas), digabung antar segmen.
+  const constructionHeader = CONSTRUCTION_HEADERS[type];
+  const constructionType = constructionHeader
+    ? mergeDistinctText(rows.map((r) => r[constructionHeader]))
+    : '-';
+  const condition = mergeDistinctText(rows.map((r) => r[CONDITION_HEADER]));
+
+  // Kerusakan: khusus Jalan berupa ukuran numerik (Panjang/Lebar/Kedalaman
+  // Kerusakan) dirangkum length-weighted sama seperti ukuran keseluruhan,
+  // supaya bisa disandingkan langsung. Jenis lain memakai kondisi teknis
+  // spesifik (mis. Kondisi Sedimentasi) sebagai teks.
+  let damageSummary = '-';
+  if (type === 'Jalan') {
+    let damageLengthSum = 0;
+    let hasDamageLength = false;
+    const damageWidthPairs: { length: number; value: number }[] = [];
+    const damageDepthPairs: { length: number; value: number }[] = [];
+    rows.forEach((row) => {
+      const dLen = toNum(row[JALAN_DAMAGE_HEADERS.length]);
+      if (dLen !== null) { damageLengthSum += dLen; hasDamageLength = true; }
+      const dWidth = toNum(row[JALAN_DAMAGE_HEADERS.width]);
+      if (dWidth !== null) damageWidthPairs.push({ length: dLen ?? 0, value: dWidth });
+      const dDepth = toNum(row[JALAN_DAMAGE_HEADERS.depth]);
+      if (dDepth !== null) damageDepthPairs.push({ length: dLen ?? 0, value: dDepth });
+    });
+    const avgDamageWidth = weightedAvg(damageWidthPairs) ?? avg(damageWidthPairs.map((p) => p.value));
+    const avgDamageDepth = weightedAvg(damageDepthPairs) ?? avg(damageDepthPairs.map((p) => p.value));
+    const parts: string[] = [];
+    if (hasDamageLength) parts.push(`P: ${formatNum(damageLengthSum)} m`);
+    if (avgDamageWidth !== null) parts.push(`L: ${formatNum(avgDamageWidth)} m`);
+    if (avgDamageDepth !== null) parts.push(`D: ${formatNum(avgDamageDepth)} cm`);
+    damageSummary = parts.length > 0 ? parts.join(', ') : '-';
+  } else {
+    const textFields = DAMAGE_TEXT_FIELDS[type];
+    if (textFields) {
+      const parts = textFields
+        .map((f) => {
+          const value = mergeDistinctText(rows.map((r) => r[f.header]));
+          return value !== '-' ? `${f.label}: ${value}` : '';
+        })
+        .filter((s) => s !== '');
+      damageSummary = parts.length > 0 ? parts.join(', ') : '-';
+    }
+  }
+
   // Fallback: jika tidak ada satu pun baris yang punya panjang segmen
   // valid (rowLength = 0 di semuanya, mis. data lama/format tak lengkap),
   // weightedAvg akan mengembalikan null — pakai rata-rata sederhana agar
@@ -193,10 +286,14 @@ export function summarizeItemRows(itemId: string, type: string, rows: any[]): It
     avgWidth: weightedAvg(widthPairs) ?? avg(widthValues),
     avgHeight: weightedAvg(heightPairs) ?? avg(heightValues),
     freeformDimension,
+    constructionType,
+    condition,
+    damageSummary,
     notes: mergeDistinctText(rows.map((r) => r['Catatan'])),
     rows,
   };
 }
+
 
 
 /**

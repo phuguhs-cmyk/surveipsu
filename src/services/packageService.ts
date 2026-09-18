@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import { createPackage as createPackageOnServer, listPackages as listPackagesFromServer, renamePackage as renamePackageOnServer, deletePackageOnServer } from './apiService';
 import { safeJsonParse, parseCoordinate } from './commonUtils';
+import { clearPackageAnnotations } from './annotationService';
 
 /**
  * Layanan untuk mengelola daftar Paket Pekerjaan. Sejak sheet `Packages`
@@ -306,6 +307,17 @@ export async function deletePackage(packageId: string): Promise<void> {
 }
 
 /**
+ * Mengosongkan seluruh cache paket lokal (AsyncStorage). Dipakai oleh fitur
+ * admin "Hapus Semua Data", agar setelah semua data survei & paket master
+ * dihapus di server, perangkat tidak lagi menampilkan paket-paket lokal
+ * "yatim" yang sudah tidak punya data/induk apa pun di server.
+ */
+export async function clearAllPackages(): Promise<void> {
+  await writePackages([]);
+}
+
+
+/**
  * Mengubah daftar jenis pekerjaan (allowedInfraTypes) yang relevan untuk
  * sebuah paket yang SUDAH dibuat sebelumnya. Dipakai agar surveyor bisa
  * menambah atau mengurangi jenis pekerjaan setelah paket dibuat, tanpa
@@ -365,7 +377,11 @@ export async function renamePackageEverywhere(
 export async function deletePackageEverywhere(packageId: string, username?: string): Promise<void> {
   await deletePackageOnServer(packageId, username);
   await deletePackage(packageId);
+  // Hapus juga anotasi peta lokal milik paket ini, agar tidak menyisakan
+  // anotasi "yatim" di AsyncStorage yang menunjuk ke paket yang sudah dihapus.
+  await clearPackageAnnotations(packageId);
 }
+
 
 
 /**

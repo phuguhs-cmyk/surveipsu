@@ -7,6 +7,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
 } from 'react-native';
 import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,9 +18,24 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { deleteAllData, fetchSurveyList } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
-import { clearQueue } from '../services/queueService';
+import { clearQueue, getQueue } from '../services/queueService';
+import { clearAllPackages } from '../services/packageService';
+import { clearAllAnnotations } from '../services/annotationService';
 import { AuthUser } from '../types';
 import { theme } from '../theme';
+
+type PackageStatusFilter = 'all' | 'draft' | 'in_progress' | 'posted';
+
+function getStatusMeta(status: 'draft' | 'in_progress' | 'posted') {
+  switch (status) {
+    case 'posted':
+      return { label: 'Diposting', bg: theme.colors.successBg, color: theme.colors.success };
+    case 'in_progress':
+      return { label: 'Proses', bg: theme.colors.warningBg, color: theme.colors.warning };
+    default:
+      return { label: 'Draft', bg: theme.colors.borderSoft, color: theme.colors.textSecondary };
+  }
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AdminDashboard'>;
 
@@ -29,10 +48,21 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   navigation: Props['navigation'];
   userName?: string;
 }) {
+  const statusMeta = getStatusMeta(item.status);
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>{item.packageName}</Text>
+      <View style={styles.cardHeaderRow}>
+        <Text style={[styles.cardTitle, { flex: 1 }]}>{item.packageName}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
+          <Text style={[styles.statusBadgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+        </View>
+      </View>
       <Text style={styles.cardCount}>{item.itemCount} data survei tersimpan</Text>
+      {(item.kecamatan || item.desaKelurahan) && (
+        <Text style={styles.cardLocation}>
+          {[item.kecamatan, item.desaKelurahan].filter(Boolean).join(', ')}
+        </Text>
+      )}
       <View style={styles.cardActionRow}>
         <TouchableOpacity
           style={styles.cardActionButton}
@@ -83,29 +113,48 @@ interface PackageSummary {
   desaKelurahan?: string;
   itemCount: number;
   lastUpdate: string;
+  status: 'draft' | 'in_progress' | 'posted';
 }
+
+const DELETE_ALL_CONFIRM_PHRASE = 'HAPUS SEMUA DATA';
+
+const STATUS_FILTERS: { key: PackageStatusFilter; label: string }[] = [
+  { key: 'all', label: 'Semua' },
+  { key: 'draft', label: 'Draft' },
+  { key: 'in_progress', label: 'Proses' },
+  { key: 'posted', label: 'Diposting' },
+];
 
 export default function AdminDashboardScreen({ navigation }: Props) {
   const [packages, setPackages] = useState<PackageSummary[]>([]);
   const [allRows, setAllRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState<PackageStatusFilter>('all');
+  const [queuePendingCount, setQueuePendingCount] = useState(0);
+  const [deleteAllModalVisible, setDeleteAllModalVisible] = useState(false);
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
+  const [deletingAll, setDeletingAll] = useState(false);
   const loadInFlightRef = useRef(false);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (isRefresh = false) => {
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
-    setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     try {
-      const [currentUser, rows] = await Promise.all([
+      const [currentUser, rows, queue] = await Promise.all([
         getCurrentUser(),
         fetchSurveyList(),
+        getQueue().catch(() => []),
       ]);
       setUser(currentUser);
       setAllRows(rows);
+      setQueuePendingCount(queue.filter((q) => q.status !== 'sending').length);
 
-      const map = new Map<string, PackageSummary>();
+      const map = new Map<string, PackageSummary & { allPosted: boolean }>();
       const seenItemKeys = new Set<string>();
       rows.forEach((row, index) => {
         const packageId = row['ID Paket'];
@@ -114,10 +163,12 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         const itemKey = `${packageId}::${row['ID Item Pekerjaan'] || `__row_${index}`}`;
         const isNewItem = !seenItemKeys.has(itemKey);
         if (isNewItem) seenItemKeys.add(itemKey);
+        const isPosted = row['Status'] === 'Diposting';
         const existing = map.get(packageId);
         if (existing) {
           if (isNewItem) existing.itemCount += 1;
           if (timestamp > existing.lastUpdate) existing.lastUpdate = timestamp;
+          existing.allPosted = existing.allPosted && isPosted;
         } else {
           map.set(packageId, {
             packageId,
@@ -126,16 +177,24 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             desaKelurahan: row['Desa/Kelurahan'] || '',
             itemCount: 1,
             lastUpdate: timestamp,
+            allPosted: isPosted,
+            status: 'draft',
           });
         }
       });
 
-      const result = Array.from(map.values()).sort((a, b) => (a.lastUpdate < b.lastUpdate ? 1 : -1));
+      const result = Array.from(map.values())
+        .map((pkg) => ({
+          ...pkg,
+          status: (pkg.itemCount > 0 ? (pkg.allPosted ? 'posted' : 'in_progress') : 'draft') as PackageSummary['status'],
+        }))
+        .sort((a, b) => (a.lastUpdate < b.lastUpdate ? 1 : -1));
       setPackages(result);
     } catch (err: any) {
       Alert.alert('Gagal Memuat', err?.message || 'Tidak dapat mengambil data dari server.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
       loadInFlightRef.current = false;
     }
   }, []);
@@ -145,6 +204,10 @@ export default function AdminDashboardScreen({ navigation }: Props) {
       loadData();
     }, [loadData])
   );
+
+  const handleRefresh = useCallback(() => {
+    loadData(true);
+  }, [loadData]);
 
   const handleLogout = () => {
     Alert.alert('Keluar', 'Yakin ingin keluar dari akun ini?', [
@@ -161,36 +224,49 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   };
 
   const handleDeleteAllData = () => {
-    Alert.alert(
-      'Hapus Semua Data',
-      'Semua paket dan data survei di sheet GAS akan dihapus. Foto di Drive tetap dipertahankan. Tindakan ini tidak dapat dibatalkan.',
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus Semua',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteAllData(user?.username || '');
-              await clearQueue();
-              await loadData();
-              Alert.alert('Berhasil', 'Semua paket dan data survei telah dihapus.');
-            } catch (err: any) {
-              Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus semua data.');
-            }
-          },
-        },
-      ]
-    );
+    setDeleteAllConfirmText('');
+    setDeleteAllModalVisible(true);
   };
+
+  const closeDeleteAllModal = () => {
+    if (deletingAll) return;
+    setDeleteAllModalVisible(false);
+    setDeleteAllConfirmText('');
+  };
+
+  const confirmDeleteAll = async () => {
+    if (deleteAllConfirmText.trim() !== DELETE_ALL_CONFIRM_PHRASE) return;
+    setDeletingAll(true);
+    try {
+      await deleteAllData(user?.username || '');
+      await clearQueue();
+      // Bersihkan juga cache paket & anotasi lokal, agar tidak ada data
+      // "yatim" (paket/anotasi lokal tanpa induk data survei) yang
+      // tertinggal di perangkat setelah data server dihapus.
+      await clearAllPackages();
+      await clearAllAnnotations();
+      await loadData();
+      setDeleteAllModalVisible(false);
+      setDeleteAllConfirmText('');
+      Alert.alert('Berhasil', 'Semua paket dan data survei telah dihapus.');
+    } catch (err: any) {
+      Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus semua data.');
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
 
   const totalItems = packages.reduce((sum, p) => sum + p.itemCount, 0);
 
   const filteredPackages = useMemo(() => {
     const query = searchText.trim().toLowerCase();
-    if (!query) return packages;
-    return packages.filter((p) => p.packageName.toLowerCase().includes(query));
-  }, [packages, searchText]);
+    return packages.filter((p) => {
+      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
+      if (query && !p.packageName.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [packages, searchText, statusFilter]);
 
   return (
     <View style={styles.container}>
@@ -222,7 +298,9 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             style={styles.headerAction}
             onPress={() => navigation.navigate('Queue')}
           >
-            <Text style={styles.manageUsersLink}>Antrian</Text>
+            <Text style={styles.manageUsersLink}>
+              Antrian{queuePendingCount > 0 ? ` (${queuePendingCount})` : ''}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.headerAction, styles.logoutAction]} onPress={handleLogout}>
             <Text style={styles.logoutText}>Keluar</Text>
@@ -263,6 +341,20 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         autoCapitalize="none"
       />
 
+      <View style={styles.filterRow}>
+        {STATUS_FILTERS.map((f) => (
+          <TouchableOpacity
+            key={f.key}
+            style={[styles.filterChip, statusFilter === f.key && styles.filterChipActive]}
+            onPress={() => setStatusFilter(f.key)}
+          >
+            <Text style={[styles.filterChipText, statusFilter === f.key && styles.filterChipTextActive]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {loading ? (
         <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 24 }} />
       ) : (
@@ -275,6 +367,9 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           maxToRenderPerBatch={8}
           windowSize={5}
           updateCellsBatchingPeriod={50}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primary]} />
+          }
           ListEmptyComponent={
             <Text style={styles.emptyText}>
               {searchText.trim()
@@ -291,6 +386,64 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           )}
         />
       )}
+
+      <Modal
+        visible={deleteAllModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeDeleteAllModal}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Hapus Semua Data</Text>
+            <Text style={styles.modalMessage}>
+              Semua paket dan data survei di sheet GAS akan dihapus, beserta seluruh foto
+              terkait di Google Drive dan anotasi peta. Tindakan ini tidak dapat dibatalkan.
+            </Text>
+            <Text style={styles.modalInstruction}>
+              Ketik <Text style={styles.modalPhrase}>{DELETE_ALL_CONFIRM_PHRASE}</Text> untuk
+              melanjutkan:
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              value={deleteAllConfirmText}
+              onChangeText={setDeleteAllConfirmText}
+              placeholder={DELETE_ALL_CONFIRM_PHRASE}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              editable={!deletingAll}
+            />
+            <View style={styles.modalActionRow}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={closeDeleteAllModal}
+                disabled={deletingAll}
+              >
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  styles.modalConfirmButton,
+                  (deleteAllConfirmText.trim() !== DELETE_ALL_CONFIRM_PHRASE || deletingAll) &&
+                    styles.buttonDisabled,
+                ]}
+                onPress={confirmDeleteAll}
+                disabled={deleteAllConfirmText.trim() !== DELETE_ALL_CONFIRM_PHRASE || deletingAll}
+              >
+                {deletingAll ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Hapus Semua</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -360,6 +513,32 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   emptyText: { textAlign: 'center', color: theme.colors.textSecondary, marginTop: 24 },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: theme.colors.surface,
+  },
+  filterChipActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: theme.font.medium,
+    color: theme.colors.textPrimary,
+  },
+  filterChipTextActive: {
+    color: '#fff',
+  },
   card: {
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.md,
@@ -368,8 +547,23 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusBadge: {
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: theme.font.semiBold,
+  },
   cardTitle: { fontSize: 16, fontWeight: theme.font.medium, color: theme.colors.textPrimary },
   cardCount: { fontSize: 13, color: theme.colors.textPrimary, marginTop: 4 },
+  cardLocation: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   cardLink: { fontSize: 12, color: theme.colors.primary, marginTop: 6, fontWeight: theme.font.medium },
   cardActionRow: {
     flexDirection: 'row',
@@ -379,5 +573,78 @@ const styles = StyleSheet.create({
   },
   cardActionButton: {
     paddingVertical: 4,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: theme.font.semiBold,
+    color: theme.colors.textPrimary,
+    marginBottom: 10,
+  },
+  modalMessage: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    marginBottom: 14,
+    lineHeight: 19,
+  },
+  modalInstruction: {
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+  },
+  modalPhrase: {
+    fontWeight: theme.font.semiBold,
+    color: theme.colors.danger,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: theme.colors.background,
+    marginBottom: 16,
+  },
+  modalActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: theme.radius.sm,
+    minWidth: 96,
+    alignItems: 'center',
+  },
+  modalCancelButton: {
+    backgroundColor: theme.colors.primarySoftBg,
+    borderWidth: 1,
+    borderColor: theme.colors.primaryBorder,
+  },
+  modalCancelText: {
+    color: theme.colors.textPrimary,
+    fontWeight: theme.font.medium,
+  },
+  modalConfirmButton: {
+    backgroundColor: theme.colors.danger,
+  },
+  modalConfirmText: {
+    color: '#fff',
+    fontWeight: theme.font.semiBold,
   },
 });

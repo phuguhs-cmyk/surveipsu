@@ -1,4 +1,4 @@
-import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned } from '../plannedDimensions';
+import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned, computeDrainageSegmentPlanned } from '../plannedDimensions';
 
 describe('computeRoadSegmentPlanned', () => {
   it('computes length from STA difference and average width from start/end', () => {
@@ -55,5 +55,41 @@ describe('computeRetainingWallSegmentPlanned', () => {
     });
     expect(result.plannedLength).toBe('30.00');
     expect(result.plannedHeight).toBe('2.00');
+  });
+});
+
+describe('computeDrainageSegmentPlanned', () => {
+  it('computes length from STA difference and uses segment width/depth directly', () => {
+    const result = computeDrainageSegmentPlanned({
+      staStart: '0+000', staEnd: '0+025', width: '0.6', depth: '0.8',
+    });
+    expect(result.plannedLength).toBe('25.00');
+    expect(result.plannedWidth).toBe('0.60');
+    expect(result.plannedHeight).toBe('0.80');
+  });
+
+  it('falls back to `length` field when STA is invalid', () => {
+    const result = computeDrainageSegmentPlanned({
+      staStart: '', staEnd: '', length: '40', width: '0.5', depth: '0.5',
+    });
+    expect(result.plannedLength).toBe('40.00');
+    expect(result.plannedWidth).toBe('0.50');
+    expect(result.plannedHeight).toBe('0.50');
+  });
+
+  it('returns empty strings when no valid data present', () => {
+    const result = computeDrainageSegmentPlanned({});
+    expect(result.plannedLength).toBe('');
+    expect(result.plannedWidth).toBe('');
+    expect(result.plannedHeight).toBe('');
+  });
+
+  it('computes per-segment values independently (no cross-segment averaging)', () => {
+    const seg1 = computeDrainageSegmentPlanned({ staStart: '0+000', staEnd: '0+010', width: '0.4', depth: '0.4' });
+    const seg2 = computeDrainageSegmentPlanned({ staStart: '0+010', staEnd: '0+200', width: '0.9', depth: '1.2' });
+    expect(seg1.plannedWidth).toBe('0.40');
+    expect(seg2.plannedWidth).toBe('0.90');
+    expect(seg1.plannedLength).toBe('10.00');
+    expect(seg2.plannedLength).toBe('190.00');
   });
 });

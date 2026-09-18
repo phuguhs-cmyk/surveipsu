@@ -99,9 +99,39 @@ function buildItemProfiles(type: string, typeRowsSorted: any[]) {
   return result;
 }
 
+/**
+ * Beberapa data lama (sebelum lebar jalan dipecah menjadi "Lebar STA Awal
+ * (m)"/"Lebar STA Akhir (m)") masih menyimpan/menampilkan kolom generik
+ * "Lebar Jalan (m)" yang sekarang tidak pernah diisi lagi, sehingga selalu
+ * tampak kosong ("-") di laporan. Isi otomatis dari rata-rata kedua kolom
+ * STA tsb (jika keduanya/salah satunya ada) supaya laporan tidak kosong.
+ * Harus selaras dengan fungsi sejenis di services/reportService.ts.
+ */
+function fillLegacyRoadWidth(row: any): any {
+  if (row['Lebar Jalan (m)'] !== undefined && row['Lebar Jalan (m)'] !== '' && row['Lebar Jalan (m)'] != null) {
+    return row;
+  }
+  const toNum = (v: any) => {
+    if (v === undefined || v === null || v === '') return null;
+    const n = parseFloat(String(v).replace(',', '.'));
+    return isNaN(n) ? null : n;
+  };
+  const widths = [toNum(row['Lebar STA Awal (m)']), toNum(row['Lebar STA Akhir (m)'])].filter(
+    (n): n is number => n !== null
+  );
+  if (widths.length === 0) return row;
+  const avg = widths.reduce((a, b) => a + b, 0) / widths.length;
+  return { ...row, 'Lebar Jalan (m)': Number.isInteger(avg) ? String(avg) : avg.toFixed(2) };
+}
+
 export default function PackageReportScreen({ route }: Props) {
-  const { packageName, rows } = route.params;
+  const { packageName, rows: rawRows } = route.params;
+  const rows = useMemo(
+    () => rawRows.map((row) => (row['_infrastructureType'] === 'Jalan' ? fillLegacyRoadWidth(row) : row)),
+    [rawRows]
+  );
   const [printing, setPrinting] = useState(false);
+
 
   const groups = useMemo(() => {
     const types = Array.from(new Set(rows.map((row) => row['_infrastructureType']).filter(Boolean)));
@@ -215,20 +245,26 @@ export default function PackageReportScreen({ route }: Props) {
                 <View style={styles.profileSection}>
                   <Text style={styles.profileSectionTitle}>Ringkasan Ukuran per Item Pekerjaan</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator>
-                    <View style={{ width: 620 }}>
+                    <View style={{ width: 900 }}>
                       <View style={[styles.row, styles.headerRow2]}>
-                        <Text style={[styles.headerCell, { width: 220 }]}>Lokasi</Text>
-                        <Text style={[styles.headerCell, { width: 240 }]}>Ukuran (Panjang, Lebar, Tinggi/Dalam)</Text>
-                        <Text style={[styles.headerCell, { width: 160 }]}>Catatan</Text>
+                        <Text style={[styles.headerCell, { width: 40 }]}>No</Text>
+                        <Text style={[styles.headerCell, { width: 180 }]}>Lokasi</Text>
+                        <Text style={[styles.headerCell, { width: 140 }]}>Jenis Konstruksi</Text>
+                        <Text style={[styles.headerCell, { width: 200 }]}>Ukuran</Text>
+                        <Text style={[styles.headerCell, { width: 200 }]}>Kerusakan</Text>
+                        <Text style={[styles.headerCell, { width: 140 }]}>Kondisi</Text>
                       </View>
                       {group.itemSummaries.map((item, index) => (
                         <View
                           key={item.itemId}
                           style={[styles.row, index % 2 === 1 && styles.rowAlt]}
                         >
-                          <Text style={[styles.cell, { width: 220 }]} numberOfLines={3}>{item.label}</Text>
-                          <Text style={[styles.cell, { width: 240 }]} numberOfLines={3}>{formatDimensionSummary(item)}</Text>
-                          <Text style={[styles.cell, { width: 160 }]} numberOfLines={3}>{item.notes}</Text>
+                          <Text style={[styles.cell, { width: 40 }]}>{index + 1}</Text>
+                          <Text style={[styles.cell, { width: 180 }]} numberOfLines={3}>{item.label}</Text>
+                          <Text style={[styles.cell, { width: 140 }]} numberOfLines={3}>{item.constructionType}</Text>
+                          <Text style={[styles.cell, { width: 200 }]} numberOfLines={3}>{formatDimensionSummary(item)}</Text>
+                          <Text style={[styles.cell, { width: 200 }]} numberOfLines={3}>{item.damageSummary}</Text>
+                          <Text style={[styles.cell, { width: 140 }]} numberOfLines={3}>{item.condition}</Text>
                         </View>
                       ))}
                     </View>

@@ -75,6 +75,21 @@ export interface BuildMapHtmlOptions {
   /** URL style MapLibre untuk mode vector online. */
   onlineVectorStyleUrl?: string;
   /**
+   * Jika diisi (URL style MapLibre GL yang sama dipakai mode "Peta"), sebuah
+   * overlay TRANSPARAN berisi HANYA footprint bangunan (source-layer
+   * `building`) akan ditambahkan DI ATAS mode Satelit/Hybrid, agar bentuk
+   * bangunan tetap terlihat tajam (vector) walau citra satelit di bawahnya
+   * beresolusi rendah/buram saat di-zoom sangat dekat (umum terjadi di area
+   * pedesaan). HANYA diaktifkan di native (bukan web) karena MapLibre GL
+   * (WebGL) terbukti tidak stabil di dalam sandbox `<iframe srcDoc>` yang
+   * dipakai versi web (lihat catatan `onlineVectorStyleUrl` di
+   * `MapScreen.tsx`). Style diambil (fetch) saat runtime, layer-nya
+   * disaring hanya yang `source-layer === 'building'`; jika gagal (tidak ada
+   * internet/CORS), overlay ini dilewati secara diam-diam tanpa mengganggu
+   * tampilan peta lainnya.
+   */
+  buildingOverlayStyleUrl?: string;
+  /**
    * URI lokal (`file://...`) dari file `.pmtiles` bawaan APK (lihat
    * `src/services/pmtilesAsset.ts`), berisi peta vector OpenStreetMap
    * (skema OpenMapTiles) hasil Planetiler. Jika diisi, sebuah mode peta
@@ -111,6 +126,15 @@ export interface BuildMapHtmlOptions {
    * kelompok marker tertentu saat peta padat titik. Default `false`.
    */
   showLayerFilter?: boolean;
+  /**
+   * Jika `false`, anotasi yang sudah tersimpan tetap DITAMPILKAN di peta
+   * (garis/polygon + label), namun popup-nya TIDAK menampilkan tombol
+   * "Edit Label"/"Hapus" dan pesan `edit_annotation_label`/`delete_annotation`
+   * tidak akan dikirim ke aplikasi — dipakai untuk akun Viewer (read-only)
+   * agar hanya bisa melihat anotasi, tidak bisa menambah/mengubahnya. Default
+   * `true` (perilaku lama: semua anotasi bisa diedit/dihapus lewat popup).
+   */
+  annotationsEditable?: boolean;
 }
 
 function buildHeadHtml(opts: BuildMapHtmlOptions): string {
@@ -269,6 +293,7 @@ function buildScript(
   const showDrawingTools = opts.showDrawingTools !== false;
   const packageSearchEnabled = !!opts.packageSearchEnabled;
   const showLayerFilter = !!opts.showLayerFilter;
+  const annotationsEditable = opts.annotationsEditable !== false;
 
   const tileLayerScript = opts.onlineTileUrlTemplate
     ? ''
@@ -309,6 +334,7 @@ function buildScript(
 `;
 
   const vectorStyleUrl = opts.onlineVectorStyleUrl || '';
+  const buildingOverlayStyleUrl = opts.buildingOverlayStyleUrl || '';
   const offlinePmtilesUri = opts.offlinePmtilesUri || '';
   // Style OpenMapTiles minimal (skema yang dipakai Planetiler) untuk
   // menampilkan jalan, air, bangunan, area hijau, dan label tempat dari
@@ -502,20 +528,55 @@ ${offlineStyleScript}
       // (baru tersedia setelah layer benar-benar ditambahkan ke peta lewat
       // event 'add'), lalu jatuh ke raster street begitu terjadi error saat
       // mode "street" sedang aktif.
+      // Fungsi bersama: jatuh ke raster street kapan pun dipanggil, dari
+      // jalur mana pun (event 'error' MapLibre, global 'error'/'unhandledrejection',
+      // atau timeout pengaman di bawah). Aman dipanggil berkali-kali (no-op
+      // jika sudah di raster atau mode street tidak sedang aktif).
+      function fallbackToRasterStreet() {
+        try {
+          if (streetLayer !== streetRasterLayer && modeLayers.street === streetLayer && map.hasLayer(streetLayer)) {
+            map.removeLayer(streetLayer);
+            modeLayers.street = streetRasterLayer;
+            streetRasterLayer.addTo(map);
+            document.querySelectorAll('.mode-btn').forEach(function (btn) {
+              btn.classList.toggle('active', btn.dataset.mode === 'street');
+            });
+          }
+        } catch (eFallback) {}
+      }
+
       streetLayer.once('add', function () {
         try {
           var glMap = streetLayer.getMaplibreMap && streetLayer.getMaplibreMap();
           if (glMap && typeof glMap.on === 'function') {
-            glMap.on('error', function () {
-              if (streetLayer !== streetRasterLayer && modeLayers.street === streetLayer && map.hasLayer(streetLayer)) {
-                map.removeLayer(streetLayer);
-                modeLayers.street = streetRasterLayer;
-                streetRasterLayer.addTo(map);
-              }
-            });
+            glMap.on('error', fallbackToRasterStreet);
+
+            // Lapis pengaman TIMEOUT: sebagian kegagalan (mis. konteks WebGL
+            // gagal dibuat, worker style gagal tanpa memicu event 'error' di
+            // atas) tidak menghasilkan event apa pun, sehingga peta tetap
+            // kosong/putih SELAMANYA tanpa fallback. Jika setelah beberapa
+            // detik peta vector belum juga selesai memuat (glMap.loaded()
+            // masih false) sementara mode "street" masih aktif, paksa jatuh
+            // ke raster sebagai pengaman terakhir.
+            setTimeout(function () {
+              try {
+                if (modeLayers.street === streetLayer && map.hasLayer(streetLayer) && typeof glMap.loaded === 'function' && !glMap.loaded()) {
+                  fallbackToRasterStreet();
+                }
+              } catch (eTimeout) {}
+            }, 6000);
           }
         } catch (e2) {}
       });
+
+      // Lapis pengaman GLOBAL: menangkap error sinkron TAK TERTANGKAP dan
+      // promise rejection TAK TERTANGKAP dari mana pun (mis. dari dalam
+      // worker/RAF loop MapLibre GL yang tidak melempar lewat jalur
+      // 'error' instance di atas), lalu jatuh ke raster street bila mode
+      // "street" sedang aktif memakai layer vector ini. Tidak mengganggu
+      // fitur lain karena hanya bertindak jika kondisi di atas terpenuhi.
+      window.addEventListener('error', fallbackToRasterStreet);
+      window.addEventListener('unhandledrejection', fallbackToRasterStreet);
     } catch (e) {
       streetLayer = streetRasterLayer;
     }
@@ -533,14 +594,64 @@ ${offlineStyleScript}
     modeLayers.offline = offlineStreetLayer;
   }
 
+  // Overlay TRANSPARAN footprint bangunan (vector) di atas mode
+  // Satelit/Hybrid, agar bentuk bangunan tetap tajam walau citra satelit di
+  // bawahnya beresolusi rendah (umum di area pedesaan). Style diambil lewat
+  // fetch(), lalu disaring HANYA layer dengan 'source-layer' === 'building';
+  // kegagalan apa pun (tidak ada internet, CORS, MapLibre GL tidak
+  // tersedia) dilewati diam-diam tanpa memengaruhi tampilan peta lainnya.
+  var buildingOverlayStyleUrl = ${JSON.stringify(buildingOverlayStyleUrl)};
+  var buildingOverlayLayer = null;
+  if (buildingOverlayStyleUrl && window.L && typeof L.maplibreGL === 'function' && window.fetch) {
+    fetch(buildingOverlayStyleUrl)
+      .then(function (res) { return res.json(); })
+      .then(function (style) {
+        var buildingLayers = (style.layers || []).filter(function (layer) {
+          return layer['source-layer'] === 'building' && (layer.type === 'fill' || layer.type === 'fill-extrusion');
+        });
+        if (!buildingLayers.length) return;
+        var overlayStyle = {
+          version: 8,
+          sources: style.sources,
+          sprite: style.sprite,
+          glyphs: style.glyphs,
+          layers: buildingLayers.map(function (layer) {
+            return Object.assign({}, layer, {
+              type: 'fill',
+              paint: Object.assign({}, layer.paint, {
+                'fill-color': (layer.paint && layer.paint['fill-color']) || '#d9d0c3',
+                'fill-opacity': 0.55,
+                'fill-outline-color': '#8a7a63',
+              }),
+            });
+          }),
+        };
+        try {
+          buildingOverlayLayer = L.maplibreGL({ style: overlayStyle, attribution: '' });
+          if (modeLayers.satellite && map.hasLayer(modeLayers.satellite)) buildingOverlayLayer.addTo(map);
+          if (modeLayers.hybrid && map.hasLayer(modeLayers.hybrid)) buildingOverlayLayer.addTo(map);
+        } catch (eOverlay) {
+          buildingOverlayLayer = null;
+        }
+      })
+      .catch(function () {});
+  }
+
   function activateMapMode(mode) {
     Object.keys(modeLayers).forEach(function (key) {
       if (map.hasLayer(modeLayers[key])) map.removeLayer(modeLayers[key]);
     });
+    if (buildingOverlayLayer && map.hasLayer(buildingOverlayLayer)) {
+      map.removeLayer(buildingOverlayLayer);
+    }
     var nextLayer = modeLayers[mode] || modeLayers.street;
     try {
       nextLayer.addTo(map);
+      if (buildingOverlayLayer && (mode === 'satellite' || mode === 'hybrid')) {
+        try { buildingOverlayLayer.addTo(map); } catch (eOverlay2) {}
+      }
     } catch (e) {
+
       // Layer vector gagal ditambahkan (mis. style.json gagal diunduh, atau
       // file PMTiles offline belum tersalin): jatuh ke raster street sebagai
       // pengaman terakhir.
@@ -657,6 +768,7 @@ ${offlineStyleScript}
   var MAX_NATIVE_ZOOM = ${maxNativeZoom};
   var MAX_ZOOM = ${maxZoomWithOvershoot};
   var SHOW_DRAWING_TOOLS = ${showDrawingTools};
+  var ANNOTATIONS_EDITABLE = ${annotationsEditable};
 
   var map = L.map('map', { zoomControl: true, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
 ${tileLayerScript}
@@ -718,20 +830,24 @@ ${layerFilterScript}
     if (a.label) {
       layer.bindTooltip(a.label, { permanent: true, direction: 'center', className: 'marker-label' });
     }
-    var popupHtml = '<b>' + label + '</b><br/>'
-      + '<button onclick="window.__editAnnotationLabel(\\'' + a.id + '\\')" style="margin-top:6px;margin-right:6px;background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-weight:700;">Edit Label</button>'
-      + '<button onclick="window.__deleteAnnotation(\\'' + a.id + '\\')" style="margin-top:6px;background:#dc2626;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-weight:700;">Hapus</button>';
+    var popupHtml = '<b>' + label + '</b><br/>';
+    if (ANNOTATIONS_EDITABLE) {
+      popupHtml += '<button onclick="window.__editAnnotationLabel(\\'' + a.id + '\\')" style="margin-top:6px;margin-right:6px;background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-weight:700;">Edit Label</button>'
+        + '<button onclick="window.__deleteAnnotation(\\'' + a.id + '\\')" style="margin-top:6px;background:#dc2626;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-weight:700;">Hapus</button>';
+    }
     layer.bindPopup(popupHtml);
   }
   ANNOTATIONS.forEach(renderSavedAnnotation);
 
   window.__deleteAnnotation = function (id) {
+    if (!ANNOTATIONS_EDITABLE) return;
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'delete_annotation', id: id }));
     }
   };
 
   window.__editAnnotationLabel = function (id) {
+    if (!ANNOTATIONS_EDITABLE) return;
     map.closePopup();
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'edit_annotation_label', id: id }));

@@ -12,8 +12,11 @@ type Props = NativeStackScreenProps<RootStackParamList, 'PublicPackageData'>;
 const COLUMNS = [
   { key: 'no', label: 'No', width: 40 },
   { key: 'packageName', label: 'Nama Paket', width: 180 },
-  { key: 'location', label: 'Lokasi', width: 200 },
-  { key: 'dimension', label: 'Ukuran (Panjang, Lebar, Tinggi/Dalam)', width: 240 },
+  { key: 'location', label: 'Lokasi', width: 180 },
+  { key: 'constructionType', label: 'Jenis Konstruksi', width: 160 },
+  { key: 'dimension', label: 'Ukuran', width: 200 },
+  { key: 'damage', label: 'Kerusakan', width: 200 },
+  { key: 'condition', label: 'Kondisi', width: 140 },
   { key: 'notes', label: 'Catatan', width: 260 },
 ];
 
@@ -124,9 +127,18 @@ export default function PublicPackageDataScreen({ route }: Props) {
                     {item.label}
                   </Text>
                   <Text style={[styles.cell, { width: COLUMNS[3].width }]}>
-                    {formatDimensionSummary(item)}
+                    {item.constructionType}
                   </Text>
                   <Text style={[styles.cell, { width: COLUMNS[4].width }]}>
+                    {formatDimensionSummary(item)}
+                  </Text>
+                  <Text style={[styles.cell, { width: COLUMNS[5].width }]}>
+                    {item.damageSummary}
+                  </Text>
+                  <Text style={[styles.cell, { width: COLUMNS[6].width }]}>
+                    {item.condition}
+                  </Text>
+                  <Text style={[styles.cell, { width: COLUMNS[7].width }]}>
                     {item.notes}
                   </Text>
                 </View>

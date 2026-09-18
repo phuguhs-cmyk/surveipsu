@@ -2,7 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import { safeJsonParse, parseCoordinate } from './commonUtils';
 import { isOnline } from './queueService';
-import { saveAnnotationToServer, deleteAnnotationFromServer, listAnnotationsFromServer } from './apiService';
+import { saveAnnotationToServer, deleteAnnotationFromServer, listAnnotationsFromServer, publicListAnnotationsFromServer } from './apiService';
+
 
 /** Satu titik koordinat (lat/lng) penyusun sebuah garis atau polygon. */
 export interface AnnotationPoint {
@@ -115,6 +116,31 @@ export async function savePackageAnnotations(packageId: string, annotations: Map
     .filter((annotation): annotation is MapAnnotation => annotation !== null);
   await AsyncStorage.setItem(packageAnnotationsKey(packageId), JSON.stringify(normalized));
 }
+
+/** Menghapus seluruh anotasi lokal milik satu paket (dipakai saat paket itu
+ * sendiri dihapus), agar tidak menyisakan anotasi "yatim" di AsyncStorage
+ * yang menunjuk ke paket yang sudah tidak ada lagi. */
+export async function clearPackageAnnotations(packageId: string): Promise<void> {
+  await migrateLegacyStoreIfNeeded();
+  await AsyncStorage.removeItem(packageAnnotationsKey(packageId));
+}
+
+/** Menghapus SELURUH anotasi lokal untuk SEMUA paket. Dipakai oleh fitur
+ * admin "Hapus Semua Data": setelah seluruh paket & data survei dihapus di
+ * server, anotasi lokal per-paket yang tersisa di perangkat sudah tidak
+ * lagi punya paket induk manapun, sehingga perlu ikut dibersihkan agar
+ * tidak menjadi data "yatim" yang tertinggal selamanya di AsyncStorage. */
+export async function clearAllAnnotations(): Promise<void> {
+  await migrateLegacyStoreIfNeeded();
+  const keys = await AsyncStorage.getAllKeys();
+  const annotationKeys = keys.filter((key) => key.startsWith(`${STORAGE_KEY}/pkg/`));
+  if (annotationKeys.length > 0) {
+    await AsyncStorage.multiRemove(annotationKeys);
+  }
+  await AsyncStorage.removeItem(STORAGE_KEY);
+}
+
+
 
 /** Menambahkan satu anotasi baru ke paket, mengembalikan daftar lengkap terbaru.
  * Anotasi selalu disimpan lokal dulu (offline-first) agar UI langsung
@@ -284,4 +310,33 @@ export async function syncPackageAnnotationsFromServer(packageId: string): Promi
     return getPackageAnnotations(packageId);
   }
 }
+
+/** Versi untuk akun Viewer/publik (TANPA sessionToken) dari
+ * `syncPackageAnnotationsFromServer`. Dipakai oleh MapScreen saat pengguna
+ * yang sedang login adalah Viewer, karena `listAnnotationsFromServer` biasa
+ * mewajibkan sesi login valid — jika sesi Viewer sudah kedaluwarsa (mudah
+ * terjadi karena layar-layar publik lain yang biasa dipakai Viewer tidak
+ * pernah memvalidasi sesi), permintaan anotasi gagal secara diam-diam dan
+ * anotasi tidak pernah muncul di peta untuk akun ini. */
+export async function syncPackageAnnotationsFromPublicServer(packageId: string): Promise<MapAnnotation[]> {
+  try {
+    const serverAnnotations = await publicListAnnotationsFromServer(packageId);
+    const current = await getPackageAnnotations(packageId);
+    const byId = new Map(current.map((a) => [a.id, a]));
+    serverAnnotations.forEach((sa) => {
+      const normalized = normalizeAnnotation(sa);
+      if (!normalized) return;
+      if (!byId.has(normalized.id)) {
+        byId.set(normalized.id, normalized);
+      }
+    });
+    const merged = Array.from(byId.values());
+    await savePackageAnnotations(packageId, merged);
+    return merged;
+  } catch {
+    // Gagal sync (mis. offline): abaikan, daftar lokal tetap dipakai.
+    return getPackageAnnotations(packageId);
+  }
+}
+
 

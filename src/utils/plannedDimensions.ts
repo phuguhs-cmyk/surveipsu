@@ -52,3 +52,30 @@ export function computeRetainingWallSegmentPlanned(segment: {
     plannedHeight: !isNaN(avgHeight) ? avgHeight.toFixed(2) : '',
   };
 }
+
+/**
+ * Sama seperti computeRoadSegmentPlanned/computeRetainingWallSegmentPlanned,
+ * tapi untuk Drainase/Saluran Air. Berbeda dengan Jalan/DPT, satu segmen
+ * drainase hanya punya satu nilai `width`/`depth` (bukan pasangan start/end),
+ * sehingga Lebar & Tinggi/Kedalaman Rencana langsung memakai nilai tersebut
+ * milik segmen itu sendiri, sedangkan Panjang Rencana tetap dihitung dari
+ * |STA Akhir - STA Awal| (fallback ke `length` bila STA tidak valid).
+ */
+export function computeDrainageSegmentPlanned(segment: {
+  staStart?: string; staEnd?: string; length?: string; width?: string; depth?: string;
+}): { plannedLength: string; plannedWidth: string; plannedHeight: string } {
+  const segStart = parseStaToMeters(segment.staStart || '');
+  const segEnd = parseStaToMeters(segment.staEnd || '');
+  const segLength = !isNaN(segStart) && !isNaN(segEnd)
+    ? Math.abs(segEnd - segStart)
+    : parseFloat((segment.length || '').replace(',', '.'));
+
+  const width = parseFloat((segment.width || '').replace(',', '.'));
+  const depth = parseFloat((segment.depth || '').replace(',', '.'));
+
+  return {
+    plannedLength: !isNaN(segLength) && segLength >= 0 ? segLength.toFixed(2) : '',
+    plannedWidth: !isNaN(width) && width > 0 ? width.toFixed(2) : '',
+    plannedHeight: !isNaN(depth) && depth > 0 ? depth.toFixed(2) : '',
+  };
+}

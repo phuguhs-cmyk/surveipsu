@@ -207,13 +207,14 @@ const BASE_STYLE = `
 `;
 
 function buildItemHtml(row: any, index: number): string {
-  const photos = (row['_resolvedPhotoUrls'] || []).filter(
+  const row2 = row['_infrastructureType'] === 'Jalan' ? fillLegacyRoadWidth(row) : row;
+  const photos = (row2['_resolvedPhotoUrls'] || []).filter(
     (url: string) => url && (String(url).startsWith('data:') || String(url).startsWith('http'))
   );
 
-  const detailRows = Object.keys(row)
-    .filter((k) => !EXCLUDED_KEYS.has(k) && row[k] !== '' && row[k] != null)
-    .map((k) => `<tr><td class="k">${esc(k)}</td><td class="v">${esc(row[k])}</td></tr>`)
+  const detailRows = Object.keys(row2)
+    .filter((k) => !EXCLUDED_KEYS.has(k) && row2[k] !== '' && row2[k] != null)
+    .map((k) => `<tr><td class="k">${esc(k)}</td><td class="v">${esc(row2[k])}</td></tr>`)
     .join('');
 
   // Field khusus Mode Survei (Panjang/Lebar/Tinggi Rencana, Volume
@@ -267,6 +268,30 @@ interface ReportColumn {
   value?: (row: any) => any;
 }
 
+/**
+ * Beberapa data lama (sebelum lebar jalan dipecah menjadi "Lebar STA Awal
+ * (m)"/"Lebar STA Akhir (m)") masih menyimpan/menampilkan kolom generik
+ * "Lebar Jalan (m)" yang sekarang tidak pernah diisi lagi, sehingga selalu
+ * tampak kosong ("-") di laporan. Isi otomatis dari rata-rata kedua kolom
+ * STA tsb (jika keduanya/salah satunya ada) supaya laporan tidak kosong.
+ */
+function fillLegacyRoadWidth(row: any): any {
+  if (row['Lebar Jalan (m)'] !== undefined && row['Lebar Jalan (m)'] !== '' && row['Lebar Jalan (m)'] != null) {
+    return row;
+  }
+  const toNum = (v: any) => {
+    if (v === undefined || v === null || v === '') return null;
+    const n = parseFloat(String(v).replace(',', '.'));
+    return isNaN(n) ? null : n;
+  };
+  const widths = [toNum(row['Lebar STA Awal (m)']), toNum(row['Lebar STA Akhir (m)'])].filter(
+    (n): n is number => n !== null
+  );
+  if (widths.length === 0) return row;
+  const avg = widths.reduce((a, b) => a + b, 0) / widths.length;
+  return { ...row, 'Lebar Jalan (m)': Number.isInteger(avg) ? String(avg) : avg.toFixed(2) };
+}
+
 function getTableColumns(rows: any[]): ReportColumn[] {
   const mode = rows[0]?.['Mode Survei'];
   const modeColumns = MODE_REPORT_COLUMNS[mode as keyof typeof MODE_REPORT_COLUMNS] || [];
@@ -288,7 +313,8 @@ function getTableColumns(rows: any[]): ReportColumn[] {
   ];
 }
 
-function buildReportTable(type: string, mode: string, rows: any[]): string {
+function buildReportTable(type: string, mode: string, rawRows: any[]): string {
+  const rows = type === 'Jalan' ? rawRows.map(fillLegacyRoadWidth) : rawRows;
   const columns = getTableColumns(rows);
   // Semakin banyak kolom, semakin sempit tiap kolom (table-layout: fixed
   // membagi rata lebar tabel) — sehingga label header panjang (mis. "Kondisi
@@ -346,14 +372,16 @@ function buildItemSummaryTables(rows: any[]): string {
       <tr>
         <td class="no-cell">${index + 1}</td>
         <td>${esc(item.label)}</td>
+        <td>${esc(item.constructionType)}</td>
         <td>${esc(formatDimensionSummary(item))}</td>
-        <td>${esc(item.notes)}</td>
+        <td>${esc(item.damageSummary)}</td>
+        <td>${esc(item.condition)}</td>
       </tr>`).join('');
 
     return `<section class="report-section">
       <div class="report-section-title">${esc(type)} &mdash; Ringkasan Ukuran per Item Pekerjaan (${summaries.length} item)</div>
       <table>
-        <thead><tr><th class="no-cell">No</th><th>Lokasi</th><th>Ukuran (Panjang, Lebar, Tinggi/Dalam)</th><th>Catatan</th></tr></thead>
+        <thead><tr><th class="no-cell">No</th><th>Lokasi</th><th>Jenis Konstruksi</th><th>Ukuran</th><th>Kerusakan</th><th>Kondisi</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
     </section>`;

@@ -27,13 +27,16 @@ import {
   SEDIMENT_CONDITIONS,
   RETAINING_WALL_TYPES,
   TILT_CONDITIONS,
+  CULVERT_TYPES,
+  BRIDGE_CONSTRUCTION_TYPES,
 } from '../config';
 import { fetchSurveyList, listUsers, updateSurvey, updateSurveySegments } from '../services/apiService';
 import { getQueue, updateQueuedSurvey } from '../services/queueService';
 import { extractRowPhotoUrls } from '../services/reportService';
 import { parseStaToMeters, sortSegmentsBySta, validateStaRanges, isValidSta, addStaDistance } from '../utils/sta';
-import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned } from '../utils/plannedDimensions';
+import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned, computeDrainageSegmentPlanned } from '../utils/plannedDimensions';
 import { validateRepairDamageDimensions } from '../utils/repairValidation';
+import { deriveOverallCondition, classifyRoadSegmentCondition, classifyDrainageCondition } from '../utils/conditionRating';
 
 import { getWilayahList, getKecamatanNames, getDesaByKecamatan, findKodeDesa } from '../services/wilayahService';
 import SearchableSelectModal from '../components/SearchableSelectModal';
@@ -178,6 +181,29 @@ export default function EditItemScreen({ route, navigation }: Props) {
   const [surveyMode, setSurveyMode] = useState<SurveyMode>('Perbaikan');
   const [modeData, setModeData] = useState<SurveyModeData>(EMPTY_MODE_DATA);
   const offlineQueueItemsRef = useRef<any[]>([]);
+
+  // "Kondisi Eksisting" dihitung OTOMATIS dari kondisi tiap segmen/komponen
+  // (worst-case), sama seperti di WorkItemFormScreen, agar konsisten saat
+  // data lama dibuka & disimpan ulang di layar ini.
+  const derivedExistingCondition = useMemo(() => {
+    if (surveyMode === 'Pembangunan Baru') return '';
+    if (isSegmented) return deriveOverallCondition(segments.map((s) => s.values.condition));
+    if (infrastructureType === 'Gorong-gorong') {
+      return deriveOverallCondition([values.inletCondition, values.outletCondition, values.condition]);
+    }
+    if (infrastructureType === 'Jembatan') {
+      return deriveOverallCondition([values.upperStructureCondition, values.lowerStructureCondition, values.condition]);
+    }
+    return deriveOverallCondition([values.condition]);
+  }, [surveyMode, isSegmented, segments, infrastructureType, values]);
+
+  useEffect(() => {
+    if (surveyMode === 'Pembangunan Baru') return;
+    setModeData((previous) =>
+      previous.existingCondition === derivedExistingCondition ? previous : { ...previous, existingCondition: derivedExistingCondition }
+    );
+  }, [derivedExistingCondition, surveyMode]);
+
 
   const emptySegmentValues = useCallback((): Record<string, string> => {
     const initial: Record<string, string> = {};
@@ -568,6 +594,9 @@ export default function EditItemScreen({ route, navigation }: Props) {
                 if (infrastructureType === 'Dinding Penahan Tanah (DPT)') {
                   return { ...modeData, ...computeRetainingWallSegmentPlanned(s.values) };
                 }
+                if (infrastructureType === 'Drainase/Saluran Air') {
+                  return { ...modeData, ...computeDrainageSegmentPlanned(s.values) };
+                }
                 return modeData;
               })
             : undefined;
@@ -935,14 +964,18 @@ export default function EditItemScreen({ route, navigation }: Props) {
                 ]
           ).map(([key, label]) => (
             <View key={key}>
-              <Text style={styles.subLabel}>{label}</Text>
-              <TextInput
-                style={styles.input}
-                value={modeData[key as keyof SurveyModeData]}
-                onChangeText={(value) => setModeData((previous) => ({ ...previous, [key]: value }))}
-                editable={!readOnly}
-                keyboardType={NUMERIC_MODE_DATA_KEYS.includes(key) ? 'numeric' : 'default'}
-              />
+              <Text style={styles.subLabel}>{key === 'existingCondition' ? `${label} (otomatis)` : label}</Text>
+              {key === 'existingCondition' ? (
+                <Text style={styles.computedValue}>{modeData.existingCondition || 'Isi kondisi tiap segmen/komponen dahulu'}</Text>
+              ) : (
+                <TextInput
+                  style={styles.input}
+                  value={modeData[key as keyof SurveyModeData]}
+                  onChangeText={(value) => setModeData((previous) => ({ ...previous, [key]: value }))}
+                  editable={!readOnly}
+                  keyboardType={NUMERIC_MODE_DATA_KEYS.includes(key) ? 'numeric' : 'default'}
+                />
+              )}
             </View>
           ))}
         </>
@@ -1019,6 +1052,38 @@ export default function EditItemScreen({ route, navigation }: Props) {
                         {!readOnly && (f.key === 'heightStart' || f.key === 'heightEnd') && infrastructureType === 'Dinding Penahan Tanah (DPT)' && (
                           <SlopeHeightHelper onApply={(v) => updateSegmentValue(seg.localKey, f.key, v)} />
                         )}
+                        {!readOnly && f.key === 'damageDepth' && infrastructureType === 'Jalan' && (() => {
+                          const suggestion = classifyRoadSegmentCondition(seg.values);
+                          if (!suggestion) return null;
+                          return (
+                            <View style={styles.suggestionBox}>
+                              <Text style={styles.suggestionText}>
+                                💡 Saran kondisi berdasarkan luas & kedalaman kerusakan: <Text style={styles.suggestionValue}>{suggestion}</Text>
+                              </Text>
+                              {seg.values.condition !== suggestion && (
+                                <TouchableOpacity onPress={() => updateSegmentValue(seg.localKey, 'condition', suggestion)}>
+                                  <Text style={styles.suggestionApply}>Terapkan ke Kondisi</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          );
+                        })()}
+                        {!readOnly && f.key === 'sedimentCondition' && infrastructureType === 'Drainase/Saluran Air' && (() => {
+                          const suggestion = classifyDrainageCondition(seg.values.sedimentCondition);
+                          if (!suggestion) return null;
+                          return (
+                            <View style={styles.suggestionBox}>
+                              <Text style={styles.suggestionText}>
+                                💡 Saran kondisi berdasarkan Kondisi Sedimentasi: <Text style={styles.suggestionValue}>{suggestion}</Text>
+                              </Text>
+                              {seg.values.condition !== suggestion && (
+                                <TouchableOpacity onPress={() => updateSegmentValue(seg.localKey, 'condition', suggestion)}>
+                                  <Text style={styles.suggestionApply}>Terapkan ke Kondisi</Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          );
+                        })()}
                       </View>
                     );
                   })}
@@ -1048,16 +1113,45 @@ export default function EditItemScreen({ route, navigation }: Props) {
         </>
       ) : (
         fields.map((f) => {
+          const isChipField = [
+            'culvertType', 'constructionType', 'condition',
+            'inletCondition', 'outletCondition',
+            'upperStructureCondition', 'lowerStructureCondition',
+          ].includes(f.key);
+          const chipOptions =
+            f.key === 'culvertType' ? CULVERT_TYPES :
+            f.key === 'constructionType' ? BRIDGE_CONSTRUCTION_TYPES :
+            ['condition', 'inletCondition', 'outletCondition', 'upperStructureCondition', 'lowerStructureCondition'].includes(f.key)
+              ? CONDITION_OPTIONS : [];
+          // Field kondisi disembunyikan untuk mode Pembangunan Baru, sama
+          // seperti di WorkItemFormScreen, karena belum ada kondisi eksisting
+          // untuk item yang benar-benar baru.
+          const isConditionKey = ['condition', 'inletCondition', 'outletCondition', 'upperStructureCondition', 'lowerStructureCondition'].includes(f.key);
+          if (isConditionKey && surveyMode === 'Pembangunan Baru') return null;
           return (
             <View key={f.key}>
               <Text style={styles.label}>{f.label}</Text>
-              <TextInput
-                style={styles.input}
-                value={values[f.key] ?? ''}
-                onChangeText={(v) => handleChange(f.key, v)}
-                editable={!readOnly}
-                keyboardType={ELEVATION_KEYS.has(f.key) ? 'numbers-and-punctuation' : f.numeric ? 'numeric' : 'default'}
-              />
+              {isChipField ? (
+                <View style={styles.chipRow}>
+                  {chipOptions.map((opt) => (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[styles.chip, values[f.key] === opt && styles.chipActive]}
+                      onPress={() => !readOnly && handleChange(f.key, opt)}
+                    >
+                      <Text style={[styles.chipText, values[f.key] === opt && styles.chipTextActive]}>{opt}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <TextInput
+                  style={styles.input}
+                  value={values[f.key] ?? ''}
+                  onChangeText={(v) => handleChange(f.key, v)}
+                  editable={!readOnly}
+                  keyboardType={ELEVATION_KEYS.has(f.key) ? 'numbers-and-punctuation' : f.numeric ? 'numeric' : 'default'}
+                />
+              )}
             </View>
           );
         })
@@ -1152,6 +1246,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
+  suggestionBox: {
+    marginTop: 8,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+  },
+  suggestionText: {
+    fontSize: 12,
+    color: '#92400e',
+  },
+  suggestionValue: {
+    fontWeight: '700',
+  },
+  suggestionApply: {
+    marginTop: 6,
+    color: '#2563eb',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+
   readOnlyBanner: {
     backgroundColor: '#fef3c7',
     borderRadius: 8,
@@ -1178,6 +1295,7 @@ const styles = StyleSheet.create({
   computedValue: {
     fontSize: 14,
     color: '#0f172a',
+
     backgroundColor: '#f1f5f9',
     borderRadius: 8,
     paddingVertical: 10,

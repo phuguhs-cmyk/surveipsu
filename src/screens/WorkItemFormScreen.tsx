@@ -35,8 +35,9 @@ import { getCurrentUser } from '../services/authService';
 import { listUsers } from '../services/apiService';
 import { getWilayahList, getKecamatanNames, getDesaByKecamatan, findKodeDesa } from '../services/wilayahService';
 import { isValidSta, sortSegmentsBySta, validateStaRanges, parseStaToMeters, addStaDistance } from '../utils/sta';
-import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned } from '../utils/plannedDimensions';
+import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned, computeDrainageSegmentPlanned } from '../utils/plannedDimensions';
 import { validateRepairDamageDimensions } from '../utils/repairValidation';
+import { deriveOverallCondition, classifyRoadSegmentCondition, classifyDrainageCondition } from '../utils/conditionRating';
 
 import SketchPad from '../components/SketchPad';
 import SchemaPreviewModal from '../components/SchemaPreviewModal';
@@ -284,8 +285,17 @@ function ModeSummaryFields({
     return (
       <View style={styles.segmentBox}>
         <Text style={styles.label}>Data Kondisi dan Perbaikan</Text>
-        <Text style={styles.subLabel}>Kondisi Eksisting</Text>
-        <ChipGroup options={CONDITION_OPTIONS} value={value.existingCondition} onChange={(text) => onChange({ existingCondition: text })} />
+        {readOnlyKeys?.existingCondition !== undefined ? (
+          <View>
+            <Text style={styles.subLabel}>Kondisi Eksisting (otomatis dari kondisi segmen)</Text>
+            <Text style={styles.computedValue}>{readOnlyKeys.existingCondition || 'Isi kondisi tiap segmen dahulu'}</Text>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.subLabel}>Kondisi Eksisting</Text>
+            <ChipGroup options={CONDITION_OPTIONS} value={value.existingCondition} onChange={(text) => onChange({ existingCondition: text })} />
+          </>
+        )}
         {field('problem', 'Permasalahan/Kerusakan', 'Jelaskan kerusakan atau masalah', true)}
         {field('proposedAction', 'Tindakan Perbaikan', 'Contoh: rehabilitasi lapis permukaan', true)}
         {field('treatmentVolume', 'Volume Penanganan', 'Contoh: 250')}
@@ -299,9 +309,19 @@ function ModeSummaryFields({
   return (
     <View style={styles.segmentBox}>
       <Text style={styles.label}>Data Pengembangan</Text>
-      <Text style={styles.subLabel}>Kondisi Eksisting</Text>
-      <ChipGroup options={CONDITION_OPTIONS} value={value.existingCondition} onChange={(text) => onChange({ existingCondition: text })} />
+      {readOnlyKeys?.existingCondition !== undefined ? (
+        <View>
+          <Text style={styles.subLabel}>Kondisi Eksisting (otomatis dari kondisi segmen)</Text>
+          <Text style={styles.computedValue}>{readOnlyKeys.existingCondition || 'Isi kondisi tiap segmen dahulu'}</Text>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.subLabel}>Kondisi Eksisting</Text>
+          <ChipGroup options={CONDITION_OPTIONS} value={value.existingCondition} onChange={(text) => onChange({ existingCondition: text })} />
+        </>
+      )}
       {field('currentCapacity', 'Kapasitas Eksisting', 'Contoh: 100 unit/hari')}
+
       {field('targetCapacity', 'Target Kapasitas', 'Contoh: 200 unit/hari')}
       {field('additionalLength', 'Panjang Tambahan', 'Opsional')}
       {field('additionalWidth', 'Lebar Tambahan', 'Opsional')}
@@ -510,8 +530,33 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
   // seluruh item). Nilai di bawah ini HANYA ringkasan pratinjau di layar
   // input (Panjang Rencana = total seluruh segmen, Lebar/Tinggi Rencana =
   // rata-rata dibobot panjang segmen), bukan nilai yang tersimpan per baris.
+  // "Kondisi Eksisting" (mode Perbaikan/Pengembangan) dihitung OTOMATIS dari
+  // kondisi tiap segmen/komponen yang sudah diisi surveyor, memakai
+  // pendekatan worst-case (lihat deriveOverallCondition): jika salah satu
+  // segmen "Rusak Berat", keseluruhan item dianggap "Rusak Berat" agar
+  // prioritas penanganan tidak terlewat. Surveyor tidak perlu mengisi
+  // ulang kondisi keseluruhan secara manual/terpisah.
+  const derivedExistingCondition = useMemo(() => {
+    if (surveyMode === 'Pembangunan Baru') return '';
+    if (isRoad) return deriveOverallCondition(roadSegments.map((s) => s.condition));
+    if (isDrainage) return deriveOverallCondition(drainageSegments.map((s) => s.condition));
+    if (isRetainingWall) return deriveOverallCondition(retainingWallSegments.map((s) => s.condition));
+    if (isCulvert) return deriveOverallCondition([culvert.inletCondition, culvert.outletCondition, culvert.condition]);
+    if (isBridge) return deriveOverallCondition([bridge.upperStructureCondition, bridge.lowerStructureCondition, bridge.condition]);
+    return deriveOverallCondition([dynamicDetail.condition]);
+  }, [surveyMode, isRoad, isDrainage, isRetainingWall, isCulvert, isBridge, roadSegments, drainageSegments, retainingWallSegments, culvert, bridge, dynamicDetail]);
+
+  useEffect(() => {
+    if (surveyMode === 'Pembangunan Baru') return;
+    setModeData((previous) =>
+      previous.existingCondition === derivedExistingCondition ? previous : { ...previous, existingCondition: derivedExistingCondition }
+    );
+  }, [derivedExistingCondition, surveyMode]);
+
   const plannedReadOnlyKeys = useMemo(() => {
-    if (surveyMode !== 'Pembangunan Baru') return undefined;
+    if (surveyMode !== 'Pembangunan Baru') {
+      return { existingCondition: derivedExistingCondition };
+    }
 
     if (isRoad) {
       // Ringkasan pratinjau: Σ panjang segmen (Total Panjang Rencana) dan
@@ -577,9 +622,45 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
       };
     }
 
+    if (isDrainage) {
+      // Ringkasan pratinjau: Σ panjang segmen (Total Panjang Rencana) dan
+      // rata-rata dibobot lebar/kedalaman segmen. Nilai sebenarnya yang
+      // tersimpan tetap dihitung per segmen (lihat computeDrainageSegmentPlanned),
+      // memakai width/depth milik segmen itu sendiri (bukan pasangan start/end).
+      let totalLength = 0;
+      let hasLength = false;
+      const widthPairs: { length: number; value: number }[] = [];
+      const depthPairs: { length: number; value: number }[] = [];
+      drainageSegments.forEach((s) => {
+        const segStart = parseStaToMeters(s.staStart);
+        const segEnd = parseStaToMeters(s.staEnd);
+        const segLength = !isNaN(segStart) && !isNaN(segEnd) ? Math.abs(segEnd - segStart) : parseFloat((s.length || '').replace(',', '.'));
+        const validSegLength = !isNaN(segLength) && segLength > 0 ? segLength : 0;
+        if (validSegLength > 0) { totalLength += validSegLength; hasLength = true; }
+
+        const width = parseFloat((s.width || '').replace(',', '.'));
+        if (!isNaN(width) && width > 0) widthPairs.push({ length: validSegLength, value: width });
+
+        const depth = parseFloat((s.depth || '').replace(',', '.'));
+        if (!isNaN(depth) && depth > 0) depthPairs.push({ length: validSegLength, value: depth });
+      });
+      const totalWidthLength = widthPairs.reduce((sum, p) => sum + p.length, 0);
+      const avgWidth = totalWidthLength > 0
+        ? widthPairs.reduce((sum, p) => sum + p.length * p.value, 0) / totalWidthLength
+        : (widthPairs.length > 0 ? widthPairs.reduce((sum, p) => sum + p.value, 0) / widthPairs.length : NaN);
+      const totalDepthLength = depthPairs.reduce((sum, p) => sum + p.length, 0);
+      const avgDepth = totalDepthLength > 0
+        ? depthPairs.reduce((sum, p) => sum + p.length * p.value, 0) / totalDepthLength
+        : (depthPairs.length > 0 ? depthPairs.reduce((sum, p) => sum + p.value, 0) / depthPairs.length : NaN);
+      return {
+        plannedLength: hasLength ? `${totalLength.toFixed(2)} (total semua segmen)` : '',
+        plannedWidth: !isNaN(avgWidth) ? `${avgWidth.toFixed(2)} (rata-rata semua segmen)` : '',
+        plannedHeight: !isNaN(avgDepth) ? `${avgDepth.toFixed(2)} (rata-rata semua segmen)` : '',
+      };
+    }
 
     return undefined;
-  }, [surveyMode, isRoad, isRetainingWall, roadSegments, retainingWallSegments]);
+  }, [surveyMode, isRoad, isDrainage, isRetainingWall, roadSegments, drainageSegments, retainingWallSegments, derivedExistingCondition]);
 
 
 
@@ -822,11 +903,14 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
           const { id, ...raw } = sortedDrainageSegments[i];
           const rest = normalizeDrainageSegment(raw, surveyMode);
           const localId = makeId();
+          const rowModeData = surveyMode === 'Pembangunan Baru'
+            ? { ...finalModeData, ...computeDrainageSegmentPlanned(rest) }
+            : finalModeData;
           await addToQueue({
             localId,
             createdAt: new Date().toISOString(),
             status: 'pending',
-            data: { ...baseData, localId, segmentIndex: i + 1, segmentTotal: total, drainageSegment: rest },
+            data: { ...baseData, modeData: rowModeData, localId, segmentIndex: i + 1, segmentTotal: total, drainageSegment: rest },
           });
           rowsToQueue += 1;
         }
@@ -1137,6 +1221,22 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
                     value={seg.damageDepth}
                     onChangeText={(v) => updateRoadSegment(seg.id, { damageDepth: v })}
                   />
+                  {(() => {
+                    const suggestion = classifyRoadSegmentCondition(seg);
+                    if (!suggestion) return null;
+                    return (
+                      <View style={styles.suggestionBox}>
+                        <Text style={styles.suggestionText}>
+                          💡 Saran kondisi berdasarkan luas & kedalaman kerusakan: <Text style={styles.suggestionValue}>{suggestion}</Text>
+                        </Text>
+                        {seg.condition !== suggestion && (
+                          <TouchableOpacity onPress={() => updateRoadSegment(seg.id, { condition: suggestion })}>
+                            <Text style={styles.suggestionApply}>Terapkan ke Kondisi</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })()}
                 </>}
                 <TextInput
                   style={[styles.input, styles.textArea]}
@@ -1300,6 +1400,22 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
                     value={seg.condition}
                     onChange={(v) => updateDrainageSegment(seg.id, { condition: v })}
                   />
+                  {surveyMode === 'Perbaikan' && (() => {
+                    const suggestion = classifyDrainageCondition(seg.sedimentCondition);
+                    if (!suggestion) return null;
+                    return (
+                      <View style={styles.suggestionBox}>
+                        <Text style={styles.suggestionText}>
+                          💡 Saran kondisi berdasarkan Kondisi Sedimentasi: <Text style={styles.suggestionValue}>{suggestion}</Text>
+                        </Text>
+                        {seg.condition !== suggestion && (
+                          <TouchableOpacity onPress={() => updateDrainageSegment(seg.id, { condition: suggestion })}>
+                            <Text style={styles.suggestionApply}>Terapkan ke Kondisi</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })()}
                 </>}
                 <TextInput
                   style={[styles.input, styles.textArea]}
@@ -1888,6 +2004,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
+  suggestionBox: {
+    marginTop: 8,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    backgroundColor: '#fffbeb',
+  },
+  suggestionText: {
+    fontSize: 12,
+    color: '#92400e',
+  },
+  suggestionValue: {
+    fontWeight: '700',
+  },
+  suggestionApply: {
+    marginTop: 6,
+    color: '#2563eb',
+    fontWeight: '600',
+    fontSize: 13,
+  },
+
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

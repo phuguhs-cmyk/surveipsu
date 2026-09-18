@@ -3,6 +3,7 @@ import { getSessionToken } from './authService';
 import { ApiResponse, QueuedSurvey, ManagedUser, UserPermissions, WilayahItem } from '../types';
 import { RETRYABLE_HTTP_STATUSES, sleep, isRetryableNetworkError, isTimeoutOrCancelError } from './commonUtils';
 
+
 const readCache = new Map<string, { expiresAt: number; value: any }>();
 const MAX_READ_CACHE_ENTRIES = 32;
 
@@ -183,7 +184,21 @@ export async function fetchSurveyList(infrastructureType?: string, packageId?: s
   // cache lama; jika perlu refresh keadaan terbaru, user bisa swipe/tekan tombol
   // refresh manual. Cache dibersihkan eksplisit setiap kali aksi tulis berhasil
   // via post() di atas, jadi data tetap akurat saat ada perubahan.
-  return fetchWithCache(cacheKey, 300000, async () => {
+  //
+  // PENGECUALIAN: readCache ini bersifat in-memory PER PERANGKAT/instance app,
+  // sehingga invalidatePackageAndSurveyReadCache() yang dipanggil saat admin
+  // melakukan post/unpost HANYA membersihkan cache di perangkat admin —
+  // perangkat surveyor lain tetap menyimpan cache lama hingga 5 menit,
+  // sehingga status kunci "Survei Selesai" tidak langsung terbuka kembali di
+  // sisi surveyor walau admin sudah membatalkan posting paket. Query yang
+  // menyertakan packageId dipakai untuk pemeriksaan status kunci paket
+  // (mis. PackageDetailScreen/PackageDataScreen) yang harus selalu akurat,
+  // jadi TTL-nya dipersingkat jauh (10 detik) supaya perubahan status oleh
+  // admin cepat terlihat oleh surveyor lain tanpa harus menunggu cache lama
+  // kedaluwarsa, sambil tetap mengurangi request berulang dalam waktu sangat
+  // singkat (navigasi cepat bolak-balik dalam 1 layar yang sama).
+  const ttlMs = packageId ? 10000 : 300000;
+  return fetchWithCache(cacheKey, ttlMs, async () => {
     const params = new URLSearchParams({ action: 'list', sessionToken: token ?? '' });
     if (infrastructureType) params.set('infrastructureType', infrastructureType);
     if (packageId) params.set('packageId', packageId);
@@ -431,7 +446,12 @@ export async function createPackage(
 export async function listPackages(): Promise<ServerPackage[]> {
   const token = await getSessionToken();
   const cacheKey = `listPackages:${token ?? 'guest'}`;
-  return fetchWithCache(cacheKey, 30000, async () => {
+  // TTL diperpanjang ke 300s (samakan dengan fetchSurveyList) karena cache ini
+  // sudah otomatis dihapus (invalidatePackageAndSurveyReadCache) setiap ada
+  // aksi tulis (create/rename/delete/post/unpost paket atau survei), sehingga
+  // memperpanjang TTL murni mempercepat navigasi berulang tanpa membuat data
+  // basi ditampilkan.
+  return fetchWithCache(cacheKey, 300000, async () => {
     const params = new URLSearchParams({ action: 'listPackages', sessionToken: token ?? '' });
     const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
     if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
@@ -529,6 +549,24 @@ export async function deleteAnnotationFromServer(packageId: string, annotationId
 export async function listAnnotationsFromServer(packageId: string): Promise<ServerAnnotation[]> {
   const token = await getSessionToken();
   const params = new URLSearchParams({ action: 'listAnnotations', sessionToken: token ?? '', packageId });
+  const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
+  if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
+  const json: ApiResponse = await response.json();
+  if (!json.success) throw new Error(json.message || 'Gagal mengambil anotasi peta.');
+  return (json as any).annotations || [];
+}
+
+/** Versi PUBLIK (tanpa sessionToken) dari `listAnnotationsFromServer`, dipakai
+ * oleh akun Viewer/publik saat melihat peta lokasi. Diperlukan karena
+ * MapScreen sebelumnya SELALU memakai action 'listAnnotations' yang
+ * mewajibkan sesi login valid; jika sesi Viewer sudah kedaluwarsa (yang
+ * mudah terjadi karena layar-layar publik lain tidak pernah memvalidasi
+ * sesi), permintaan anotasi gagal diam-diam sehingga anotasi tidak pernah
+ * muncul di peta untuk akun Viewer. Server hanya mengembalikan anotasi milik
+ * paket yang SUDAH DIPOSTING seluruhnya (lihat action 'publicListAnnotations'
+ * di Code.gs), konsisten dengan pembatasan akses publik lainnya. */
+export async function publicListAnnotationsFromServer(packageId: string): Promise<ServerAnnotation[]> {
+  const params = new URLSearchParams({ action: 'publicListAnnotations', packageId });
   const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
   if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
   const json: ApiResponse = await response.json();

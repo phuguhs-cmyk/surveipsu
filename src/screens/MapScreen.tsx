@@ -9,22 +9,25 @@ import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { getPackageById, getPackages, buildPackageMapMarkers } from '../services/packageService';
-import { fetchSurveyList } from '../services/apiService';
+import { fetchSurveyList, publicFetchSurveyList } from '../services/apiService';
 import { getQueue } from '../services/queueService';
 import { CONFIG } from '../config';
 import { buildMapHtml, LeafletMarker, LeafletAnnotation } from '../services/leafletHtml';
 import { parseCoordinate } from '../services/commonUtils';
 import { theme } from '../theme';
+import { getCurrentUser } from '../services/authService';
 import {
   getPackageAnnotations,
   addPackageAnnotation,
   removePackageAnnotation,
   syncPackageAnnotationsFromServer,
+  syncPackageAnnotationsFromPublicServer,
   updatePackageAnnotationLabel,
   pickPreferredSegmentLocationLabel,
   getLocationLabelChoices,
   MapAnnotation,
 } from '../services/annotationService';
+
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
 
@@ -187,6 +190,23 @@ export default function MapScreen({ route }: Props) {
   // dimatikan) kehilangan alamat/keterangan lokasinya dari daftar pilihan
   // chip di modal label anotasi, padahal datanya sudah benar tersimpan.
   const [allLocationNotes, setAllLocationNotes] = useState<string[]>([]);
+  // Akun Viewer (menu Data Publik) memakai jalur PUBLIK (tanpa sessionToken)
+  // untuk memuat lokasi survei maupun anotasi peta, karena sesi login Viewer
+  // mudah kedaluwarsa (layar-layar publik lain yang biasa dipakai Viewer
+  // tidak pernah memvalidasi sesi) — jika jalur terautentikasi biasa
+  // (fetchSurveyList/syncPackageAnnotationsFromServer) tetap dipakai, gagal
+  // validasi sesi membuat peta tampil tanpa anotasi secara diam-diam.
+  const [isViewer, setIsViewer] = useState(false);
+  // Viewer HANYA boleh MELIHAT anotasi (garis/polygon + label) yang sudah
+  // tersimpan, TIDAK boleh menambah anotasi baru maupun mengubah/menghapus
+  // label anotasi yang ada — berbeda dari `canAnnotate` (yang hanya
+  // membedakan peta satu paket vs peta semua paket, tanpa memandang role).
+  const canEditAnnotations = canAnnotate && !isViewer;
+
+  React.useEffect(() => {
+    void getCurrentUser().then((user) => setIsViewer(user?.role === 'viewer'));
+  }, []);
+
 
   const loadSurveyedLocations = useCallback(async (): Promise<SurveyedLocation[]> => {
     try {
@@ -194,7 +214,46 @@ export default function MapScreen({ route }: Props) {
         // Peta SEMUA paket: tampilkan titik pusat tiap paket (bukan titik
         // survei individual), sama seperti perilaku PackageMapScreen lama.
         const allPackages = await getPackages();
-        const markers = buildPackageMapMarkers({ packages: allPackages });
+
+        // PENTING: field itemCount/posted pada daftar paket lokal (AsyncStorage)
+        // TIDAK selalu diperbarui — layar lain (mis. PackageListScreen) hanya
+        // menghitung status ini di memori dari data survei server tanpa
+        // menuliskannya kembali ke penyimpanan lokal. Akibatnya peta "semua
+        // paket" bisa menampilkan status yang sudah usang/tidak sesuai data
+        // survei terbaru (mis. tetap "Belum Ada Data" walau sudah disurvei,
+        // atau tidak langsung berubah saat admin posting/unpost). Untuk itu,
+        // ambil juga data survei terbaru dari server (dengan cache pendek di
+        // fetchSurveyList) dan hitung ulang status tiap paket dari sana,
+        // sama seperti logika di PackageListScreen.
+        const rows = isViewer
+          ? await publicFetchSurveyList().catch(() => [])
+          : await fetchSurveyList().catch(() => []);
+
+        const statusByPackage = new Map<string, { count: number; posted: boolean }>();
+        const seenItemKeys = new Set<string>();
+        rows.forEach((row: any, index: number) => {
+          const rowPackageId = row['ID Paket'];
+          if (!rowPackageId) return;
+          const isRowPosted = row['Status'] === 'Diposting';
+          const itemKey = `${rowPackageId}::${row['ID Item Pekerjaan'] || `__row_${index}`}`;
+          const isNewItem = !seenItemKeys.has(itemKey);
+          if (isNewItem) seenItemKeys.add(itemKey);
+          const existing = statusByPackage.get(rowPackageId);
+          if (existing) {
+            if (isNewItem) existing.count += 1;
+            existing.posted = existing.posted && isRowPosted;
+          } else {
+            statusByPackage.set(rowPackageId, { count: 1, posted: isRowPosted });
+          }
+        });
+
+        const packagesWithFreshStatus = allPackages.map((pkg) => {
+          const fresh = statusByPackage.get(pkg.id);
+          if (!fresh) return pkg;
+          return { ...pkg, itemCount: fresh.count, posted: fresh.posted };
+        });
+
+        const markers = buildPackageMapMarkers({ packages: packagesWithFreshStatus });
         const locations: SurveyedLocation[] = markers.map((m) => ({
           lat: m.lat,
           lng: m.lng,
@@ -209,7 +268,10 @@ export default function MapScreen({ route }: Props) {
         return locations;
       }
 
-      const rows = await fetchSurveyList(undefined, packageId).catch(() => []);
+      const rows = isViewer
+        ? await publicFetchSurveyList(undefined, packageId).catch(() => [])
+        : await fetchSurveyList(undefined, packageId).catch(() => []);
+
       // Gabungkan juga survei yang BELUM terkirim (masih di antrian offline)
       // supaya pilihan label (alamat/keterangan lokasi) tetap muncul walau
       // survei belum tersinkron ke server — sebelumnya jika semua survei di
@@ -251,7 +313,8 @@ export default function MapScreen({ route }: Props) {
       setLocationsError(error?.message || 'Gagal memuat lokasi hasil survei.');
       return [];
     }
-  }, [packageId, isAllPackages]);
+  }, [packageId, isAllPackages, isViewer]);
+
 
   /** Membangun & menulis dokumen HTML peta (Leaflet, tile online) ke file
    * lokal, lalu memuatnya ke WebView lewat `source={{ uri }}` supaya ukuran
@@ -334,7 +397,7 @@ export default function MapScreen({ route }: Props) {
         // Saat mode gambar garis/polygon aktif, izinkan zoom EKSTRA (semu,
         // hasil upscale tile terakhir) supaya titik-titik anotasi lebih
         // mudah & presisi disentuh jari tanpa perlu tile tambahan.
-        drawZoomOvershoot: canAnnotate && annotateMode ? 3 : 0,
+        drawZoomOvershoot: canEditAnnotations && annotateMode ? 3 : 0,
         onlineTileUrlTemplate: CONFIG.ONLINE_MAP_MODES.street.tileUrlTemplate,
         // PENTING: di web, dokumen peta dimuat lewat `<iframe srcDoc>`
         // (bukan WebView native), yang di beberapa browser/lingkungan
@@ -346,6 +409,12 @@ export default function MapScreen({ route }: Props) {
         // sama seperti mode Satelit) yang terbukti stabil di iframe,
         // bukan vector MapLibre GL.
         onlineVectorStyleUrl: Platform.OS === 'web' ? undefined : CONFIG.ONLINE_MAP_MODES.street.vectorStyleUrl,
+        // Overlay footprint bangunan (vector) di atas mode Satelit/Hybrid.
+        // HANYA diaktifkan di native (Android/iOS): MapLibre GL (WebGL)
+        // terbukti tidak stabil di dalam sandbox `<iframe srcDoc>` yang
+        // dipakai versi web (lihat catatan `onlineVectorStyleUrl` di atas),
+        // jadi web tetap memakai citra satelit polos tanpa overlay ini.
+        buildingOverlayStyleUrl: Platform.OS === 'web' ? undefined : CONFIG.ONLINE_MAP_MODES.street.vectorStyleUrl,
         offlinePmtilesUri,
         mapMode: 'street',
         markers,
@@ -353,9 +422,10 @@ export default function MapScreen({ route }: Props) {
         // Toolbar gambar garis/polygon hanya ditampilkan saat mode anotasi
         // AKTIF pada peta satu paket; peta semua paket tidak pernah
         // menampilkannya.
-        showDrawingTools: canAnnotate && annotateMode,
+        showDrawingTools: canEditAnnotations && annotateMode,
         packageSearchEnabled: isAllPackages,
         showLayerFilter: !isAllPackages,
+        annotationsEditable: canEditAnnotations,
       });
 
       if (Platform.OS === 'web') {
@@ -368,7 +438,7 @@ export default function MapScreen({ route }: Props) {
       setMapHtmlUri(fileUri);
       setWebviewKey((k) => k + 1);
     },
-    [packageId, isAllPackages, canAnnotate, annotateMode]
+    [packageId, isAllPackages, canAnnotate, canEditAnnotations, annotateMode]
   );
 
   const initializeMap = useCallback(async (knownLocations?: SurveyedLocation[]) => {
@@ -376,9 +446,12 @@ export default function MapScreen({ route }: Props) {
     loadInFlightRef.current = true;
     setLoading(true);
     try {
-      const currentAnnotations = canAnnotate && packageId
-        ? await syncPackageAnnotationsFromServer(packageId)
+      const currentAnnotations = packageId
+        ? isViewer
+          ? await syncPackageAnnotationsFromPublicServer(packageId)
+          : await syncPackageAnnotationsFromServer(packageId)
         : [];
+
       const locationsForRender = knownLocations ?? surveyedLocations;
       await rebuildMapHtml(locationsForRender, currentAnnotations);
     } catch (error: any) {
@@ -387,7 +460,7 @@ export default function MapScreen({ route }: Props) {
       setLoading(false);
       loadInFlightRef.current = false;
     }
-  }, [canAnnotate, packageId, rebuildMapHtml, surveyedLocations]);
+  }, [canAnnotate, packageId, rebuildMapHtml, surveyedLocations, isViewer]);
 
   useFocusEffect(
     useCallback(() => {
@@ -396,17 +469,17 @@ export default function MapScreen({ route }: Props) {
         await initializeMap(locations);
       })();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [packageId, annotateMode])
+    }, [packageId, annotateMode, isViewer])
   );
 
 
   /** Menangani pesan dari dalam WebView (lihat window.ReactNativeWebView di
    * leafletHtml.ts): penyimpanan anotasi baru (garis/polygon), penghapusan,
    * dan permintaan mengubah label anotasi yang sudah tersimpan. Hanya aktif
-   * saat `canAnnotate` (peta satu paket). */
+   * saat `canEditAnnotations` (peta satu paket & bukan akun Viewer). */
   const processMapMessage = useCallback(
     async (msg: any) => {
-      if (!canAnnotate || !packageId) return;
+      if (!canEditAnnotations || !packageId) return;
       try {
         if (msg.type === 'save_annotation') {
           // Label anotasi HARUS berupa alamat/keterangan lokasi hasil survei
@@ -438,7 +511,7 @@ export default function MapScreen({ route }: Props) {
         // Pesan tidak dikenali/tidak valid: diabaikan.
       }
     },
-    [canAnnotate, packageId, surveyedLocations, allLocationNotes, packageName, rebuildMapHtml]
+    [canEditAnnotations, packageId, surveyedLocations, allLocationNotes, packageName, rebuildMapHtml]
   );
 
   const handleWebViewMessage = useCallback(
@@ -534,7 +607,7 @@ export default function MapScreen({ route }: Props) {
         <TouchableOpacity style={styles.addButton} onPress={() => initializeMap()} disabled={loading}>
           <Text style={styles.addButtonText}>{loading ? '...' : '↻ Peta'}</Text>
         </TouchableOpacity>
-        {canAnnotate && (
+        {canEditAnnotations && (
           <TouchableOpacity
             style={[styles.addButton, annotateMode && styles.addButtonActive]}
             onPress={toggleAnnotateMode}
@@ -623,7 +696,7 @@ export default function MapScreen({ route }: Props) {
           />
         )}
       </View>
-      {canAnnotate && (
+      {canEditAnnotations && (
         <Modal visible={labelModalVisible} transparent animationType="fade" onRequestClose={cancelLabelModal}>
           <KeyboardAvoidingView
             style={styles.modalBackdrop}
@@ -685,9 +758,15 @@ export default function MapScreen({ route }: Props) {
           {canAnnotate && (
             <>
               <Text style={styles.legendItem}>• Titik berwarna menandai lokasi asli (GPS) tiap item pekerjaan yang sudah disurvei, warna sesuai jenis infrastruktur.</Text>
-              <Text style={styles.legendItem}>• Aktifkan "Mode Anotasi" untuk menampilkan tombol "Garis"/"Polygon" di dalam peta, lalu ketuk peta untuk menambah titik dan tekan "Selesai &amp; Simpan".</Text>
-              <Text style={styles.legendItem}>• Setelah menekan "Selesai &amp; Simpan", isi label/keterangan pada anotasi (mis. nama saluran/rute) lalu tekan "Simpan".</Text>
-              <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat opsi ubah label atau hapus.</Text>
+              {canEditAnnotations ? (
+                <>
+                  <Text style={styles.legendItem}>• Aktifkan "Mode Anotasi" untuk menampilkan tombol "Garis"/"Polygon" di dalam peta, lalu ketuk peta untuk menambah titik dan tekan "Selesai &amp; Simpan".</Text>
+                  <Text style={styles.legendItem}>• Setelah menekan "Selesai &amp; Simpan", isi label/keterangan pada anotasi (mis. nama saluran/rute) lalu tekan "Simpan".</Text>
+                  <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat opsi ubah label atau hapus.</Text>
+                </>
+              ) : (
+                <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat labelnya. Akun Viewer hanya bisa melihat peta & anotasi, tidak bisa menambah atau mengubahnya.</Text>
+              )}
             </>
           )}
           <Text style={styles.legendItem}>• Tekan "Muat Ulang Peta" jika ingin memuat ulang tampilan peta atau data terbaru.</Text>

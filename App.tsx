@@ -59,8 +59,37 @@ async function resolveHomeRoute(): Promise<{ name: keyof RootStackParamList; par
 // menyembunyikan tombol back bawaan (headerBackVisible: false). Dengan ini,
 // pengguna bisa lompat langsung ke Dashboard atau mundur satu langkah dari
 // layar manapun tanpa perlu reload/kembali manual berkali-kali.
+//
+// Toolbar ini bisa disembunyikan (hide) & dimunculkan lagi (unhide) lewat
+// tombol panah kecil di ujung kanan, preferensinya disimpan di
+// `localStorage` (khusus web) supaya tetap sama setelah reload halaman.
+const NAV_TOOLBAR_HIDDEN_KEY = 'desktopNavToolbarHidden';
+
 function DesktopNavToolbar() {
+  const [hidden, setHidden] = React.useState(false);
+
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      setHidden(window.localStorage.getItem(NAV_TOOLBAR_HIDDEN_KEY) === '1');
+    } catch {
+      // localStorage tidak tersedia (mis. mode privat ketat): abaikan, tetap tampil.
+    }
+  }, []);
+
   if (Platform.OS !== 'web') return null;
+
+  const toggleHidden = () => {
+    setHidden((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(NAV_TOOLBAR_HIDDEN_KEY, next ? '1' : '0');
+      } catch {
+        // abaikan jika localStorage tidak bisa ditulis
+      }
+      return next;
+    });
+  };
 
   const goHome = async () => {
     const home = await resolveHomeRoute();
@@ -84,6 +113,32 @@ function DesktopNavToolbar() {
       window.history.forward();
     }
   };
+
+  // Saat disembunyikan, hanya tombol toggle kecil ("▼") yang tetap tampil
+  // di pojok kiri atas agar toolbar tetap bisa dimunculkan kembali kapan
+  // saja, tanpa pengguna "terjebak" tanpa cara membukanya lagi.
+  if (hidden) {
+    return (
+      <View
+        style={{
+          flexDirection: 'row',
+          paddingVertical: 4,
+          paddingHorizontal: 8,
+          backgroundColor: theme.colors.primarySoftBg,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.primaryBorder,
+        }}
+      >
+        <TouchableOpacity
+          onPress={toggleHidden}
+          accessibilityLabel="Tampilkan toolbar navigasi"
+          style={{ paddingVertical: 4, paddingHorizontal: 10 }}
+        >
+          <Text style={{ fontSize: 12, fontWeight: theme.font.semiBold, color: theme.colors.primaryDark }}>▼ Toolbar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -110,6 +165,13 @@ function DesktopNavToolbar() {
       </TouchableOpacity>
       <TouchableOpacity onPress={goForward} accessibilityLabel="Maju" style={{ paddingVertical: 4, paddingHorizontal: 10 }}>
         <Text style={{ fontSize: 12, fontWeight: theme.font.semiBold, color: theme.colors.primaryDark }}>Maju ▶</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={toggleHidden}
+        accessibilityLabel="Sembunyikan toolbar navigasi"
+        style={{ paddingVertical: 4, paddingHorizontal: 10, marginLeft: 'auto' }}
+      >
+        <Text style={{ fontSize: 12, fontWeight: theme.font.semiBold, color: theme.colors.primaryDark }}>▲ Sembunyikan</Text>
       </TouchableOpacity>
     </View>
   );
