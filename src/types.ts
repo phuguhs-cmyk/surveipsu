@@ -203,6 +203,17 @@ export interface WilayahItem {
   kode: string;
 }
 
+/** Satu dokumen proposal/RAB yang diunggah untuk sebuah paket pekerjaan. */
+export interface ProposalDocument {
+  proposalId: string;
+  packageId: string;
+  fileName: string;
+  fileUrl: string;
+  uploadedBy: string;
+  uploadedAt: string;
+}
+
+
 
 /** Izin granular yang bisa diatur admin untuk masing-masing user biasa. */
 export interface UserPermissions {

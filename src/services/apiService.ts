@@ -1,6 +1,7 @@
 import { CONFIG } from '../config';
 import { getSessionToken } from './authService';
-import { ApiResponse, QueuedSurvey, ManagedUser, UserPermissions, WilayahItem } from '../types';
+import { ApiResponse, QueuedSurvey, ManagedUser, UserPermissions, WilayahItem, ProposalDocument } from '../types';
+
 import { RETRYABLE_HTTP_STATUSES, sleep, isRetryableNetworkError, isTimeoutOrCancelError } from './commonUtils';
 
 
@@ -573,6 +574,57 @@ export async function publicListAnnotationsFromServer(packageId: string): Promis
   if (!json.success) throw new Error(json.message || 'Gagal mengambil anotasi peta.');
   return (json as any).annotations || [];
 }
+
+
+// ===================== PROPOSAL PEKERJAAN =====================
+// Fitur untuk mengunggah, menampilkan, dan menghapus dokumen proposal/RAB
+// (biasanya PDF) yang terkait dengan sebuah Paket Pekerjaan. File fisik
+// disimpan di Google Drive oleh server (lihat handleUploadProposal di
+// Code.gs); di sini hanya mengirim base64 dan menerima metadata/URL-nya.
+
+export async function uploadProposalToServer(params: {
+  packageId: string;
+  fileName: string;
+  mimeType: string;
+  base64: string;
+}): Promise<ApiResponse & { proposal?: ProposalDocument }> {
+  return post(await authBody({
+    action: 'uploadProposal',
+    packageId: params.packageId,
+    file: {
+      fileName: params.fileName,
+      mimeType: params.mimeType,
+      base64: params.base64,
+    },
+  })) as Promise<ApiResponse & { proposal?: ProposalDocument }>;
+}
+
+export async function deleteProposalFromServer(proposalId: string): Promise<ApiResponse> {
+  return post(await authBody({ action: 'deleteProposal', proposalId }));
+}
+
+export async function listProposalsFromServer(packageId: string): Promise<ProposalDocument[]> {
+  const token = await getSessionToken();
+  const params = new URLSearchParams({ action: 'listProposals', sessionToken: token ?? '', packageId });
+  const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
+  if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
+  const json: ApiResponse = await response.json();
+  if (!json.success) throw new Error(json.message || 'Gagal mengambil daftar proposal.');
+  return (json as any).proposals || [];
+}
+
+/** Versi PUBLIK (tanpa sessionToken), dipakai oleh akun Viewer/publik untuk
+ * melihat proposal paket yang sudah diposting (lihat 'publicListProposals'
+ * di Code.gs). */
+export async function publicListProposalsFromServer(packageId: string): Promise<ProposalDocument[]> {
+  const params = new URLSearchParams({ action: 'publicListProposals', packageId });
+  const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
+  if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
+  const json: ApiResponse = await response.json();
+  if (!json.success) throw new Error(json.message || 'Gagal mengambil daftar proposal.');
+  return (json as any).proposals || [];
+}
+
 
 
 

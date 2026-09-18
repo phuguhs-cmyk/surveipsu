@@ -134,6 +134,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<PackageStatusFilter>('all');
   const [queuePendingCount, setQueuePendingCount] = useState(0);
+  const [menuVisible, setMenuVisible] = useState(false);
   const [deleteAllModalVisible, setDeleteAllModalVisible] = useState(false);
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
@@ -210,6 +211,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   }, [loadData]);
 
   const handleLogout = () => {
+    setMenuVisible(false);
     Alert.alert('Keluar', 'Yakin ingin keluar dari akun ini?', [
       { text: 'Batal', style: 'cancel' },
       {
@@ -224,6 +226,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   };
 
   const handleDeleteAllData = () => {
+    setMenuVisible(false);
     setDeleteAllConfirmText('');
     setDeleteAllModalVisible(true);
   };
@@ -278,35 +281,69 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerAction}
-            onPress={() => navigation.navigate('UserManagement')}
-          >
-            <Text style={styles.manageUsersLink}>Kelola Pengguna</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerAction}
-            onPress={() => navigation.navigate('InfraTypeManagement')}
-          >
-            <Text style={styles.manageUsersLink}>Jenis Infrastruktur</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.headerAction}
             onPress={() => navigation.navigate('Map', {})}
           >
-            <Text style={styles.manageUsersLink}>🗺️ Lihat Peta</Text>
+            <Text style={styles.manageUsersLink}>🗺️ Peta</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerAction}
             onPress={() => navigation.navigate('Queue')}
           >
             <Text style={styles.manageUsersLink}>
-              Antrian{queuePendingCount > 0 ? ` (${queuePendingCount})` : ''}
+              📋 Antrian{queuePendingCount > 0 ? ` (${queuePendingCount})` : ''}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.headerAction, styles.logoutAction]} onPress={handleLogout}>
-            <Text style={styles.logoutText}>Keluar</Text>
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={() => setMenuVisible(true)}
+            accessibilityLabel="Menu lainnya"
+          >
+            <Text style={styles.menuButtonText}>⋮</Text>
           </TouchableOpacity>
         </View>
       </View>
+
+      <Modal
+        visible={menuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuBackdrop}
+          activeOpacity={1}
+          onPress={() => setMenuVisible(false)}
+        >
+          <View style={styles.menuCard}>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate('UserManagement');
+              }}
+            >
+              <Text style={styles.menuItemText}>👤 Kelola Pengguna</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate('InfraTypeManagement');
+              }}
+            >
+              <Text style={styles.menuItemText}>🏗️ Jenis Infrastruktur</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={handleDeleteAllData}>
+              <Text style={[styles.menuItemText, styles.menuItemDanger]}>🗑️ Hapus Semua Data</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
+            <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+              <Text style={[styles.menuItemText, styles.menuItemDanger]}>🚪 Keluar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <View style={styles.totalRow}>
         <View style={[styles.totalCard, { marginRight: 8 }]}>
@@ -325,10 +362,6 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         onPress={() => navigation.navigate('AllPackagesReport', { allRows })}
       >
         <Text style={styles.allReportBtnText}>Laporan Semua Paket (PDF)</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.deleteAllButton} onPress={handleDeleteAllData}>
-        <Text style={styles.deleteAllButtonText}>Hapus Semua Data</Text>
       </TouchableOpacity>
 
       <Text style={styles.sectionLabel}>Daftar Paket Pekerjaan</Text>
@@ -474,6 +507,59 @@ const styles = StyleSheet.create({
   logoutAction: {
     borderColor: '#f5c9c6',
     backgroundColor: theme.colors.dangerBg,
+  },
+  menuButton: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuButtonText: {
+    fontSize: 20,
+    fontWeight: theme.font.bold,
+    color: theme.colors.textPrimary,
+    lineHeight: 20,
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    alignItems: 'flex-end',
+    paddingTop: 60,
+    paddingRight: 16,
+  },
+  menuCard: {
+    width: 220,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  menuItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  menuItemText: {
+    fontSize: 14,
+    fontWeight: theme.font.medium,
+    color: theme.colors.textPrimary,
+  },
+  menuItemDanger: {
+    color: theme.colors.danger,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: theme.colors.borderSoft,
+    marginVertical: 4,
   },
   title: { fontSize: 22, fontWeight: theme.font.semiBold, color: theme.colors.textPrimary },
   subtitle: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },

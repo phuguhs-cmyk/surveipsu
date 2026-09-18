@@ -1,13 +1,17 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
-import { fetchSurveyList, listInfraTypes } from '../services/apiService';
+import { fetchSurveyList, listInfraTypes, uploadProposalToServer, deleteProposalFromServer, listProposalsFromServer } from '../services/apiService';
+import { pickProposalDocument } from '../services/documentService';
 import { INFRASTRUCTURE_TYPES } from '../config';
 import { getPackageById, updatePackageAllowedTypes } from '../services/packageService';
+import { getCurrentUser } from '../services/authService';
+import { ProposalDocument } from '../types';
 import { theme } from '../theme';
+
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PackageDetail'>;
 
@@ -31,6 +35,26 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
   const [draftTypes, setDraftTypes] = useState<string[]>([]);
   const [savingTypes, setSavingTypes] = useState(false);
   const loadInFlightRef = useRef(false);
+
+  // ─── Proposal Pekerjaan (RAB/dokumen) ──────────────────────────────────
+  const [proposals, setProposals] = useState<ProposalDocument[]>([]);
+  const [loadingProposals, setLoadingProposals] = useState(false);
+  const [uploadingProposal, setUploadingProposal] = useState(false);
+  const [deletingProposalId, setDeletingProposalId] = useState<string | null>(null);
+  const [canManageProposals, setCanManageProposals] = useState(true);
+
+  const loadProposals = useCallback(async () => {
+    setLoadingProposals(true);
+    try {
+      const list = await listProposalsFromServer(packageId);
+      setProposals(list);
+    } catch {
+      // Gagal memuat proposal (mis. offline): biarkan daftar kosong/lama,
+      // tidak perlu memblokir layar hanya karena bagian ini gagal.
+    } finally {
+      setLoadingProposals(false);
+    }
+  }, [packageId]);
 
   const loadStatus = useCallback(async () => {
     if (loadInFlightRef.current) return;
@@ -85,7 +109,12 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
   useFocusEffect(
     useCallback(() => {
       loadStatus();
-    }, [loadStatus])
+      loadProposals();
+      getCurrentUser().then((user) => {
+        const canEdit = user?.role === 'admin' || !!user?.permissions?.canEdit;
+        setCanManageProposals(canEdit);
+      });
+    }, [loadStatus, loadProposals])
   );
 
   const handleAddItem = (type: string) => {
@@ -151,6 +180,69 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
     }
   };
 
+  const handleUploadProposal = async () => {
+    if (isPackagePosted) {
+      Alert.alert(
+        'Paket Sudah Berstatus Survei Selesai',
+        'Paket pekerjaan ini sudah berstatus "Survei Selesai" (dikunci) sehingga tidak dapat diunggah proposal baru.'
+      );
+      return;
+    }
+    try {
+      const doc = await pickProposalDocument();
+      if (!doc) return;
+      setUploadingProposal(true);
+      const response = await uploadProposalToServer({
+        packageId,
+        fileName: doc.fileName,
+        mimeType: doc.mimeType,
+        base64: doc.base64,
+      });
+      if (response.proposal) {
+        setProposals((prev) => [...prev, response.proposal as ProposalDocument]);
+      } else {
+        await loadProposals();
+      }
+      Alert.alert('Berhasil', 'Proposal berhasil diunggah.');
+    } catch (err: any) {
+      Alert.alert('Gagal Mengunggah', err?.message || 'Terjadi kesalahan saat mengunggah proposal.');
+    } finally {
+      setUploadingProposal(false);
+    }
+  };
+
+  const handleOpenProposal = (proposal: ProposalDocument) => {
+    Linking.openURL(proposal.fileUrl).catch(() => {
+      Alert.alert('Gagal Membuka', 'Tidak dapat membuka file proposal ini.');
+    });
+  };
+
+  const handleDeleteProposal = (proposal: ProposalDocument) => {
+    Alert.alert(
+      'Hapus Proposal',
+      `Yakin ingin menghapus proposal "${proposal.fileName}"? Tindakan ini tidak dapat dibatalkan.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingProposalId(proposal.proposalId);
+            try {
+              await deleteProposalFromServer(proposal.proposalId);
+              setProposals((prev) => prev.filter((p) => p.proposalId !== proposal.proposalId));
+            } catch (err: any) {
+              Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus proposal.');
+            } finally {
+              setDeletingProposalId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
       <Text style={styles.title}>{packageName}</Text>
@@ -187,6 +279,48 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
         >
           <Text style={styles.mapOpenButtonText}>🗺️ Lihat Peta & Anotasi</Text>
         </TouchableOpacity>
+      </View>
+
+      <Text style={styles.sectionLabel}>Proposal Pekerjaan</Text>
+      <View style={styles.proposalBox}>
+        {loadingProposals ? (
+          <ActivityIndicator size="small" color="#2563eb" style={{ marginBottom: 8 }} />
+        ) : proposals.length === 0 ? (
+          <Text style={styles.proposalEmptyText}>Belum ada proposal/dokumen yang diunggah untuk paket ini.</Text>
+        ) : (
+          proposals.map((proposal) => (
+            <View key={proposal.proposalId} style={styles.proposalItem}>
+              <TouchableOpacity style={styles.proposalItemInfo} onPress={() => handleOpenProposal(proposal)}>
+                <Text style={styles.proposalFileName} numberOfLines={1}>📄 {proposal.fileName}</Text>
+                <Text style={styles.proposalMetaText}>
+                  Diunggah oleh {proposal.uploadedBy || '-'}
+                </Text>
+              </TouchableOpacity>
+              {canManageProposals && !isPackagePosted && (
+                <TouchableOpacity
+                  style={styles.proposalDeleteButton}
+                  onPress={() => handleDeleteProposal(proposal)}
+                  disabled={deletingProposalId === proposal.proposalId}
+                >
+                  <Text style={styles.proposalDeleteButtonText}>
+                    {deletingProposalId === proposal.proposalId ? '...' : 'Hapus'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))
+        )}
+        {canManageProposals && (
+          <TouchableOpacity
+            style={[styles.proposalUploadButton, (uploadingProposal || isPackagePosted) && styles.typeButtonDisabled]}
+            onPress={handleUploadProposal}
+            disabled={uploadingProposal || isPackagePosted}
+          >
+            <Text style={styles.proposalUploadButtonText}>
+              {uploadingProposal ? 'Mengunggah...' : '+ Unggah Proposal (PDF/DOC)'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <Text style={styles.sectionLabel}>Jenis Infrastruktur</Text>
@@ -449,4 +583,62 @@ const styles = StyleSheet.create({
     fontWeight: theme.font.medium,
     fontSize: 13,
   },
+  proposalBox: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  proposalEmptyText: {
+    color: theme.colors.textSecondary,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  proposalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderSoft,
+  },
+  proposalItemInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  proposalFileName: {
+    fontSize: 14,
+    fontWeight: theme.font.medium,
+    color: theme.colors.primary,
+  },
+  proposalMetaText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  proposalDeleteButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.colors.dangerBg,
+  },
+  proposalDeleteButtonText: {
+    color: theme.colors.danger,
+    fontSize: 12,
+    fontWeight: theme.font.medium,
+  },
+  proposalUploadButton: {
+    marginTop: 12,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  proposalUploadButtonText: {
+    color: '#fff',
+    fontWeight: theme.font.semiBold,
+    fontSize: 13,
+  },
 });
+
