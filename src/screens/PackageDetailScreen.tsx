@@ -181,13 +181,6 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
   };
 
   const handleUploadProposal = async () => {
-    if (isPackagePosted) {
-      Alert.alert(
-        'Paket Sudah Berstatus Survei Selesai',
-        'Paket pekerjaan ini sudah berstatus "Survei Selesai" (dikunci) sehingga tidak dapat diunggah proposal baru.'
-      );
-      return;
-    }
     try {
       const doc = await pickProposalDocument();
       if (!doc) return;
@@ -296,7 +289,7 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
                   Diunggah oleh {proposal.uploadedBy || '-'}
                 </Text>
               </TouchableOpacity>
-              {canManageProposals && !isPackagePosted && (
+              {canManageProposals && (
                 <TouchableOpacity
                   style={styles.proposalDeleteButton}
                   onPress={() => handleDeleteProposal(proposal)}
@@ -312,9 +305,9 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
         )}
         {canManageProposals && (
           <TouchableOpacity
-            style={[styles.proposalUploadButton, (uploadingProposal || isPackagePosted) && styles.typeButtonDisabled]}
+            style={[styles.proposalUploadButton, uploadingProposal && styles.typeButtonDisabled]}
             onPress={handleUploadProposal}
-            disabled={uploadingProposal || isPackagePosted}
+            disabled={uploadingProposal}
           >
             <Text style={styles.proposalUploadButtonText}>
               {uploadingProposal ? 'Mengunggah...' : '+ Unggah Proposal (PDF/DOC)'}

@@ -338,6 +338,16 @@ export async function renamePackage(
   return post(await authBody({ action: 'renamePackage', packageId, packageName, username, kecamatan, desaKelurahan, packageLatitude, packageLongitude }));
 }
 
+/**
+ * Menandai (atau membatalkan tanda) sebuah paket pekerjaan sebagai "Sudah
+ * Dilaksanakan" di lapangan. Hanya admin yang diizinkan (lihat
+ * handleSetPackageExecuted di Code.gs). Status ini terpisah dari status
+ * "Diposting"/"Survei Selesai" yang sudah ada.
+ */
+export async function setPackageExecuted(packageId: string, executed: boolean, username?: string): Promise<ApiResponse> {
+  return post(await authBody({ action: 'setPackageExecuted', packageId, executed, username }));
+}
+
 export async function deletePackageOnServer(packageId: string, username?: string): Promise<ApiResponse> {
   return post(await authBody({ action: 'deletePackage', packageId, username }));
 }
@@ -431,6 +441,9 @@ export interface ServerPackage {
   createdAt: string;
   packageLatitude?: number;
   packageLongitude?: number;
+  /** true jika paket ini sudah ditandai admin sebagai "Sudah Dilaksanakan" di lapangan. */
+  executed?: boolean;
+  executedAt?: string;
 }
 
 export async function createPackage(
@@ -603,9 +616,9 @@ export async function deleteProposalFromServer(proposalId: string): Promise<ApiR
   return post(await authBody({ action: 'deleteProposal', proposalId }));
 }
 
-export async function listProposalsFromServer(packageId: string): Promise<ProposalDocument[]> {
+export async function listProposalsFromServer(packageId?: string): Promise<ProposalDocument[]> {
   const token = await getSessionToken();
-  const params = new URLSearchParams({ action: 'listProposals', sessionToken: token ?? '', packageId });
+  const params = new URLSearchParams({ action: 'listProposals', sessionToken: token ?? '', packageId: packageId || '' });
   const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
   if (!response.ok) throw new Error(`Server merespons dengan status ${response.status}`);
   const json: ApiResponse = await response.json();

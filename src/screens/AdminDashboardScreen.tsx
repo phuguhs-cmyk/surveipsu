@@ -333,6 +333,15 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             >
               <Text style={styles.menuItemText}>🏗️ Jenis Infrastruktur</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate('PackageRecap');
+              }}
+            >
+              <Text style={styles.menuItemText}>📊 Rekap Paket</Text>
+            </TouchableOpacity>
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={handleDeleteAllData}>
               <Text style={[styles.menuItemText, styles.menuItemDanger]}>🗑️ Hapus Semua Data</Text>

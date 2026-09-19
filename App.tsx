@@ -22,6 +22,7 @@ import EditItemScreen from './src/screens/EditItemScreen';
 import InfraTypeManagementScreen from './src/screens/InfraTypeManagementScreen';
 import PublicPackageListScreen from './src/screens/PublicPackageListScreen';
 import PublicPackageDataScreen from './src/screens/PublicPackageDataScreen';
+import PackageRecapScreen from './src/screens/PackageRecapScreen';
 
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -304,6 +305,11 @@ export default function App() {
           name="PublicPackageData"
           component={PublicPackageDataScreen}
           options={{ title: 'Detail Data Publik', headerTitle: () => <ScreenHeaderTitle title="Detail Data Publik" /> }}
+        />
+        <Stack.Screen
+          name="PackageRecap"
+          component={PackageRecapScreen}
+          options={{ title: 'Rekap Paket', headerTitle: () => <ScreenHeaderTitle title="Rekap Paket" /> }}
         />
       </Stack.Navigator>
     </NavigationContainer>

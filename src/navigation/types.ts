@@ -26,6 +26,7 @@ export type RootStackParamList = {
   PackageData: { packageId: string; packageName: string };
   PackageReport: { packageId: string; packageName: string; rows: any[] };
   AllPackagesReport: { allRows: any[] };
+  PackageRecap: undefined;
   EditItem: { infrastructureType: string; surveyId: string };
   InfraTypeManagement: undefined;
   PublicPackageList: undefined;

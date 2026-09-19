@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
-import { createPackage as createPackageOnServer, listPackages as listPackagesFromServer, renamePackage as renamePackageOnServer, deletePackageOnServer } from './apiService';
+import { createPackage as createPackageOnServer, listPackages as listPackagesFromServer, renamePackage as renamePackageOnServer, deletePackageOnServer, setPackageExecuted as setPackageExecutedOnServer } from './apiService';
 import { safeJsonParse, parseCoordinate } from './commonUtils';
 import { clearPackageAnnotations } from './annotationService';
 
@@ -66,6 +66,13 @@ export interface WorkPackage {
    * (lihat handleRenamePackage/handleDeletePackage di Code.gs).
    */
   posted?: boolean;
+  /**
+   * true jika admin sudah menandai paket ini sebagai "Sudah Dilaksanakan"
+   * (pekerjaan fisik/konstruksi di lapangan selesai). Status ini TERPISAH
+   * dari `posted` (yang hanya menandakan survei datanya sudah dikunci).
+   */
+  executed?: boolean;
+  executedAt?: string;
 }
 
 
@@ -370,6 +377,31 @@ export async function renamePackageEverywhere(
 }
 
 /**
+ * Menandai (atau membatalkan tanda) paket pekerjaan sebagai "Sudah
+ * Dilaksanakan" di lapangan, baik di server maupun cache lokal. Hanya
+ * admin yang diizinkan oleh server (lihat handleSetPackageExecuted di
+ * Code.gs); error dari server dilempar ke pemanggil agar UI bisa
+ * menampilkan pesannya.
+ */
+export async function setPackageExecutedEverywhere(
+  packageId: string,
+  executed: boolean,
+  username?: string,
+): Promise<void> {
+  await setPackageExecutedOnServer(packageId, executed, username);
+  const packages = await readPackages();
+  const idx = packages.findIndex((p) => p.id === packageId);
+  if (idx !== -1) {
+    packages[idx] = {
+      ...packages[idx],
+      executed,
+      executedAt: executed ? new Date().toISOString() : undefined,
+    };
+    await writePackages(packages);
+  }
+}
+
+/**
  * Menghapus paket pekerjaan secara permanen di server (beserta seluruh
  * data survei & foto terkait) dan di penyimpanan lokal. Server akan
  * menolak jika paket sudah diposting.
@@ -402,7 +434,8 @@ export async function syncPackagesFromServer(): Promise<void> {
     const merged = new Map<string, WorkPackage>();
     packages.forEach((pkg) => {
       if (serverIds.has(pkg.id)) {
-        merged.set(pkg.id, pkg);
+        const sp = serverPackages.find((item) => item.packageId === pkg.id);
+        merged.set(pkg.id, sp ? { ...pkg, executed: sp.executed, executedAt: sp.executedAt } : pkg);
       }
     });
 
@@ -416,6 +449,8 @@ export async function syncPackagesFromServer(): Promise<void> {
           latitude: Number.isFinite(parseCoordinate(sp.packageLatitude)) ? parseCoordinate(sp.packageLatitude) : undefined,
           longitude: Number.isFinite(parseCoordinate(sp.packageLongitude)) ? parseCoordinate(sp.packageLongitude) : undefined,
           itemCount: 0,
+          executed: sp.executed,
+          executedAt: sp.executedAt,
         });
       }
     });
