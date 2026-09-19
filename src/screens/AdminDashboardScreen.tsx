@@ -16,10 +16,10 @@ import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
-import { deleteAllData, fetchSurveyList } from '../services/apiService';
+import { deleteAllData, fetchSurveyList, listProposalsFromServer } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
 import { clearQueue, getQueue } from '../services/queueService';
-import { clearAllPackages, syncPackagesFromServer, getPackages } from '../services/packageService';
+import { clearAllPackages, syncPackagesFromServer, getPackages, setPackageExecutedEverywhere } from '../services/packageService';
 import { clearAllAnnotations } from '../services/annotationService';
 import { AuthUser } from '../types';
 import { theme } from '../theme';
@@ -63,10 +63,16 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   item,
   navigation,
   userName,
+  isAdmin,
+  togglingId,
+  onToggleExecuted,
 }: {
   item: PackageSummary;
   navigation: Props['navigation'];
   userName?: string;
+  isAdmin?: boolean;
+  togglingId?: string | null;
+  onToggleExecuted?: (item: PackageSummary) => void;
 }) {
   const statusMeta = getStatusMeta(item.status);
   return (
@@ -83,7 +89,15 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
           <Text style={[styles.statusBadgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
         </View>
       </View>
-      <Text style={styles.cardCount}>{item.itemCount} data survei tersimpan</Text>
+      <View style={styles.metaRow}>
+        <Text style={styles.cardCount}>{item.itemCount} data survei tersimpan</Text>
+        <Text style={styles.proposalBadge}>📄 {item.proposalCount || 0} Proposal</Text>
+      </View>
+      {item.executed && (
+        <View style={styles.executedBadge}>
+          <Text style={styles.executedBadgeText}>✓ Sudah Dilaksanakan</Text>
+        </View>
+      )}
       {(item.kecamatan || item.desaKelurahan) && (
         <Text style={styles.cardLocation}>
           {[item.kecamatan, item.desaKelurahan].filter(Boolean).join(', ')}
@@ -128,6 +142,21 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
           <Text style={styles.cardLink}>Kelola Data (Edit/Hapus)</Text>
         </TouchableOpacity>
       </View>
+      {isAdmin && onToggleExecuted && (
+        <TouchableOpacity
+          style={[styles.toggleButton, item.executed && styles.toggleButtonActive]}
+          onPress={() => onToggleExecuted(item)}
+          disabled={togglingId === item.packageId}
+        >
+          <Text style={[styles.toggleButtonText, item.executed && styles.toggleButtonTextActive]}>
+            {togglingId === item.packageId
+              ? '...'
+              : item.executed
+              ? 'Batalkan Tanda Dilaksanakan'
+              : 'Tandai Sudah Dilaksanakan'}
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 });
@@ -141,6 +170,8 @@ interface PackageSummary {
   lastUpdate: string;
   status: 'draft' | 'in_progress' | 'posted';
   surveyorName?: string;
+  proposalCount?: number;
+  executed?: boolean;
 }
 
 const DELETE_ALL_CONFIRM_PHRASE = 'HAPUS SEMUA DATA';
@@ -165,6 +196,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const [deleteAllModalVisible, setDeleteAllModalVisible] = useState(false);
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const loadInFlightRef = useRef(false);
 
   const loadData = useCallback(async (isRefresh = false) => {
@@ -184,12 +216,20 @@ export default function AdminDashboardScreen({ navigation }: Props) {
 
       // Sinkronkan cache paket lokal dengan sheet master `Packages` di server,
       // lalu ambil daftar paket lokal (termasuk paket yang belum punya data
-      // survei sama sekali). Ini menyamakan sumber data dengan yang dipakai
-      // PackageRecapScreen, supaya paket yang baru dibuat (belum ada item
-      // pekerjaan) juga tetap muncul di Daftar Paket Pekerjaan, bukan hanya
-      // di Rekap Paket.
+      // survei sama sekali) beserta jumlah proposal yang sudah diunggah per
+      // paket. Ini menggabungkan data yang sebelumnya terpisah di layar
+      // "Rekap Paket" ke Daftar Paket Pekerjaan, supaya admin cukup melihat
+      // satu layar untuk status survei, jumlah proposal, dan status
+      // pelaksanaan.
       await syncPackagesFromServer().catch(() => undefined);
-      const localPackages = await getPackages();
+      const [localPackages, allProposals] = await Promise.all([
+        getPackages(),
+        listProposalsFromServer().catch(() => []),
+      ]);
+      const proposalCountByPackage = new Map<string, number>();
+      allProposals.forEach((p) => {
+        proposalCountByPackage.set(p.packageId, (proposalCountByPackage.get(p.packageId) || 0) + 1);
+      });
 
       const map = new Map<string, PackageSummary & { allPosted: boolean }>();
       const seenItemKeys = new Set<string>();
@@ -223,8 +263,8 @@ export default function AdminDashboardScreen({ navigation }: Props) {
 
       // Tambahkan paket lokal (mis. baru dibuat, belum ada data survei atau
       // dibuat dari perangkat lain) yang belum tercatat dari data survei di
-      // atas, agar konsisten dengan PackageRecapScreen yang juga menampilkan
-      // paket-paket tersebut.
+      // atas, agar semua paket (termasuk yang belum ada item pekerjaan)
+      // tetap tampil di Daftar Paket Pekerjaan.
       localPackages.forEach((pkg) => {
         if (map.has(pkg.id)) return;
         map.set(pkg.id, {
@@ -238,6 +278,17 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           status: 'draft',
           surveyorName: pkg.surveyorName || '',
         });
+      });
+
+      // Lengkapi jumlah proposal terunggah dan status "Sudah Dilaksanakan"
+      // (disimpan di cache paket lokal, bukan di baris data survei).
+      const executedByPackage = new Map<string, boolean>();
+      localPackages.forEach((pkg) => {
+        executedByPackage.set(pkg.id, !!pkg.executed);
+      });
+      map.forEach((pkg, packageId) => {
+        pkg.proposalCount = proposalCountByPackage.get(packageId) || 0;
+        pkg.executed = executedByPackage.get(packageId) || false;
       });
 
       const result = Array.from(map.values())
@@ -265,6 +316,38 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const handleRefresh = useCallback(() => {
     loadData(true);
   }, [loadData]);
+
+  const handleToggleExecuted = useCallback(
+    (item: PackageSummary) => {
+      const nextExecuted = !item.executed;
+      Alert.alert(
+        nextExecuted ? 'Tandai Sudah Dilaksanakan' : 'Batalkan Tanda Dilaksanakan',
+        nextExecuted
+          ? `Tandai paket "${item.packageName}" sebagai sudah dilaksanakan di lapangan?`
+          : `Batalkan tanda "Sudah Dilaksanakan" untuk paket "${item.packageName}"?`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Ya',
+            onPress: async () => {
+              setTogglingId(item.packageId);
+              try {
+                await setPackageExecutedEverywhere(item.packageId, nextExecuted, user?.username);
+                setPackages((prev) =>
+                  prev.map((p) => (p.packageId === item.packageId ? { ...p, executed: nextExecuted } : p))
+                );
+              } catch (err: any) {
+                Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat mengubah status pelaksanaan.');
+              } finally {
+                setTogglingId(null);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [user?.username]
+  );
 
   const handleLogout = () => {
     setMenuVisible(false);
@@ -389,15 +472,6 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             >
               <Text style={styles.menuItemText}>🏗️ Jenis Infrastruktur</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                setMenuVisible(false);
-                navigation.navigate('PackageRecap');
-              }}
-            >
-              <Text style={styles.menuItemText}>📊 Rekap Paket</Text>
-            </TouchableOpacity>
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={handleDeleteAllData}>
               <Text style={[styles.menuItemText, styles.menuItemDanger]}>🗑️ Hapus Semua Data</Text>
@@ -480,6 +554,9 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               item={item}
               navigation={navigation}
               userName={user?.name}
+              isAdmin={user?.role === 'admin'}
+              togglingId={togglingId}
+              onToggleExecuted={handleToggleExecuted}
             />
           )}
         />
@@ -727,6 +804,30 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   cardCount: { fontSize: 13, color: theme.colors.textPrimary, marginTop: 4 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4, flexWrap: 'wrap' },
+  proposalBadge: { fontSize: 12, color: theme.colors.textSecondary, fontWeight: theme.font.medium },
+  executedBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.successBg,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginTop: 6,
+  },
+  executedBadgeText: { color: theme.colors.success, fontSize: 11, fontWeight: theme.font.semiBold },
+  toggleButton: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  toggleButtonActive: {
+    borderColor: theme.colors.danger,
+  },
+  toggleButtonText: { color: theme.colors.primary, fontSize: 12, fontWeight: theme.font.medium },
+  toggleButtonTextActive: { color: theme.colors.danger },
   cardLocation: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   cardLink: { fontSize: 12, color: theme.colors.primary, marginTop: 6, fontWeight: theme.font.medium },
   cardActionRow: {
