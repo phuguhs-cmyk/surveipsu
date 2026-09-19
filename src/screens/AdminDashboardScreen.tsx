@@ -19,7 +19,7 @@ import { RootStackParamList } from '../navigation/types';
 import { deleteAllData, fetchSurveyList } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
 import { clearQueue, getQueue } from '../services/queueService';
-import { clearAllPackages } from '../services/packageService';
+import { clearAllPackages, syncPackagesFromServer, getPackages } from '../services/packageService';
 import { clearAllAnnotations } from '../services/annotationService';
 import { AuthUser } from '../types';
 import { theme } from '../theme';
@@ -37,6 +37,26 @@ function getStatusMeta(status: 'draft' | 'in_progress' | 'posted') {
   }
 }
 
+// Palet warna lembut untuk avatar inisial surveyor (sama seperti di
+// PackageListScreen), agar tampilan konsisten di kedua layar. Warna
+// dipilih deterministik dari nama surveyor supaya konsisten antar sesi.
+const AVATAR_PALETTE = ['#3b6fd6', '#3fa876', '#dba13a', '#e0685f', '#8b5cf6', '#0891b2', '#c2410c', '#4f46e5'];
+
+function getAvatarColor(name: string): string {
+  const trimmed = (name || '?').trim();
+  let hash = 0;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    hash = (hash * 31 + trimmed.charCodeAt(i)) & 0xffffffff;
+  }
+  const index = Math.abs(hash) % AVATAR_PALETTE.length;
+  return AVATAR_PALETTE[index];
+}
+
+function getAvatarInitial(name: string): string {
+  const trimmed = (name || '').trim();
+  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
+}
+
 type Props = NativeStackScreenProps<RootStackParamList, 'AdminDashboard'>;
 
 const PackageSummaryCard = memo(function PackageSummaryCard({
@@ -52,7 +72,13 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   return (
     <View style={styles.card}>
       <View style={styles.cardHeaderRow}>
-        <Text style={[styles.cardTitle, { flex: 1 }]}>{item.packageName}</Text>
+        <View style={[styles.avatar, { backgroundColor: getAvatarColor(item.surveyorName || '') }]}>
+          <Text style={styles.avatarText}>{getAvatarInitial(item.surveyorName || '')}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{item.packageName}</Text>
+          {!!item.surveyorName && <Text style={styles.cardOwnerText}>oleh {item.surveyorName}</Text>}
+        </View>
         <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
           <Text style={[styles.statusBadgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
         </View>
@@ -114,6 +140,7 @@ interface PackageSummary {
   itemCount: number;
   lastUpdate: string;
   status: 'draft' | 'in_progress' | 'posted';
+  surveyorName?: string;
 }
 
 const DELETE_ALL_CONFIRM_PHRASE = 'HAPUS SEMUA DATA';
@@ -155,6 +182,15 @@ export default function AdminDashboardScreen({ navigation }: Props) {
       setAllRows(rows);
       setQueuePendingCount(queue.filter((q) => q.status !== 'sending').length);
 
+      // Sinkronkan cache paket lokal dengan sheet master `Packages` di server,
+      // lalu ambil daftar paket lokal (termasuk paket yang belum punya data
+      // survei sama sekali). Ini menyamakan sumber data dengan yang dipakai
+      // PackageRecapScreen, supaya paket yang baru dibuat (belum ada item
+      // pekerjaan) juga tetap muncul di Daftar Paket Pekerjaan, bukan hanya
+      // di Rekap Paket.
+      await syncPackagesFromServer().catch(() => undefined);
+      const localPackages = await getPackages();
+
       const map = new Map<string, PackageSummary & { allPosted: boolean }>();
       const seenItemKeys = new Set<string>();
       rows.forEach((row, index) => {
@@ -180,8 +216,28 @@ export default function AdminDashboardScreen({ navigation }: Props) {
             lastUpdate: timestamp,
             allPosted: isPosted,
             status: 'draft',
+            surveyorName: row['Nama Surveyor'] || '',
           });
         }
+      });
+
+      // Tambahkan paket lokal (mis. baru dibuat, belum ada data survei atau
+      // dibuat dari perangkat lain) yang belum tercatat dari data survei di
+      // atas, agar konsisten dengan PackageRecapScreen yang juga menampilkan
+      // paket-paket tersebut.
+      localPackages.forEach((pkg) => {
+        if (map.has(pkg.id)) return;
+        map.set(pkg.id, {
+          packageId: pkg.id,
+          packageName: pkg.name || '(Tanpa nama)',
+          kecamatan: pkg.kecamatan || '',
+          desaKelurahan: pkg.desaKelurahan || '',
+          itemCount: pkg.itemCount || 0,
+          lastUpdate: pkg.createdAt || '',
+          allPosted: !!pkg.posted,
+          status: 'draft',
+          surveyorName: pkg.surveyorName || '',
+        });
       });
 
       const result = Array.from(map.values())
@@ -657,6 +713,19 @@ const styles = StyleSheet.create({
     fontWeight: theme.font.semiBold,
   },
   cardTitle: { fontSize: 16, fontWeight: theme.font.medium, color: theme.colors.textPrimary },
+  cardOwnerText: { fontSize: 11, color: theme.colors.textSecondary, marginTop: 1 },
+  avatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#fff',
+    fontWeight: theme.font.semiBold,
+    fontSize: 13,
+  },
   cardCount: { fontSize: 13, color: theme.colors.textPrimary, marginTop: 4 },
   cardLocation: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   cardLink: { fontSize: 12, color: theme.colors.primary, marginTop: 6, fontWeight: theme.font.medium },

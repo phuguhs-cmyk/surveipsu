@@ -30,6 +30,29 @@ type Props = NativeStackScreenProps<RootStackParamList, 'PackageList'>;
 
 const LIST_PAGE_SIZE = 12;
 
+type PackageScopeFilter = 'mine' | 'all';
+
+// Palet warna lembut untuk avatar inisial surveyor, diambil dari `theme`
+// ditambah beberapa aksen lain agar tiap surveyor mudah dibedakan secara
+// visual. Warna dipilih secara deterministik berdasarkan nama (bukan acak)
+// supaya surveyor yang sama SELALU tampil dengan warna yang sama.
+const AVATAR_PALETTE = ['#3b6fd6', '#3fa876', '#dba13a', '#e0685f', '#8b5cf6', '#0891b2', '#c2410c', '#4f46e5'];
+
+function getAvatarColor(name: string): string {
+  const trimmed = (name || '?').trim();
+  let hash = 0;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    hash = (hash * 31 + trimmed.charCodeAt(i)) & 0xffffffff;
+  }
+  const index = Math.abs(hash) % AVATAR_PALETTE.length;
+  return AVATAR_PALETTE[index];
+}
+
+function getAvatarInitial(name: string): string {
+  const trimmed = (name || '').trim();
+  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
+}
+
 let packageListLoadLock: Promise<void> | null = null;
 
 export default function PackageListScreen({ route, navigation }: Props) {
@@ -39,6 +62,12 @@ export default function PackageListScreen({ route, navigation }: Props) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [searchText, setSearchText] = useState('');
   const [visibleCount, setVisibleCount] = useState(LIST_PAGE_SIZE);
+  // Default "Paket Saya": fokus ke paket milik surveyor yang sedang login,
+  // supaya daftar tidak langsung tercampur dengan paket surveyor lain.
+  // Data paket lain TETAP ada di server & tetap bisa dilihat kapan saja
+  // dengan menekan chip "Semua Paket" — ini murni preferensi tampilan,
+  // bukan pembatasan akses/izin.
+  const [scopeFilter, setScopeFilter] = useState<PackageScopeFilter>('mine');
   const loadInFlightRef = useRef(false);
   const lastServerSyncRef = useRef(0);
 
@@ -46,15 +75,22 @@ export default function PackageListScreen({ route, navigation }: Props) {
   const canEditPackage = isAdmin || user?.permissions?.canEdit !== false;
   const canDeletePackage = isAdmin || user?.permissions?.canDelete !== false;
 
+  const normalizedSurveyorName = (surveyorName || '').trim().toLowerCase();
+
+  const scopedPackages = useMemo(() => {
+    if (scopeFilter === 'all') return packages;
+    return packages.filter((p) => String(p.surveyorName || '').trim().toLowerCase() === normalizedSurveyorName);
+  }, [packages, scopeFilter, normalizedSurveyorName]);
+
   const filteredPackages = useMemo(() => {
     const query = searchText.trim().toLowerCase();
-    if (!query) return packages;
-    return packages.filter((p) => {
+    if (!query) return scopedPackages;
+    return scopedPackages.filter((p) => {
       const name = String(p.name || '').toLowerCase();
       const surveyor = String(p.surveyorName || '').toLowerCase();
       return name.includes(query) || surveyor.includes(query);
     });
-  }, [packages, searchText]);
+  }, [scopedPackages, searchText]);
 
   const visiblePackages = filteredPackages.slice(0, visibleCount);
   const hasMorePackages = visibleCount < filteredPackages.length;
@@ -268,6 +304,24 @@ export default function PackageListScreen({ route, navigation }: Props) {
       </View>
       <Text style={styles.surveyorLabel}>Surveyor: {surveyorName}</Text>
       <Text style={styles.label}>Daftar Paket Tersimpan</Text>
+      <View style={styles.scopeChipRow}>
+        <TouchableOpacity
+          style={[styles.scopeChip, scopeFilter === 'mine' && styles.scopeChipActive]}
+          onPress={() => setScopeFilter('mine')}
+        >
+          <Text style={[styles.scopeChipText, scopeFilter === 'mine' && styles.scopeChipTextActive]}>
+            Paket Saya
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.scopeChip, scopeFilter === 'all' && styles.scopeChipActive]}
+          onPress={() => setScopeFilter('all')}
+        >
+          <Text style={[styles.scopeChipText, scopeFilter === 'all' && styles.scopeChipTextActive]}>
+            Semua Paket
+          </Text>
+        </TouchableOpacity>
+      </View>
       <TextInput
         style={styles.searchInput}
         placeholder="Cari nama paket atau surveyor..."
@@ -277,7 +331,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
       />
       {searchText.trim() ? (
         <Text style={styles.searchResultText}>
-          {filteredPackages.length} dari {packages.length} paket ditemukan
+          {filteredPackages.length} dari {scopedPackages.length} paket ditemukan
         </Text>
       ) : null}
 
@@ -287,7 +341,9 @@ export default function PackageListScreen({ route, navigation }: Props) {
         <Text style={styles.emptyText}>
           {searchText.trim()
             ? 'Tidak ada paket yang cocok dengan pencarian.'
-            : 'Belum ada paket pekerjaan. Buat paket baru di atas.'}
+            : scopeFilter === 'mine'
+              ? 'Anda belum memiliki paket pekerjaan. Buat paket baru di atas, atau tekan "Semua Paket" untuk melihat paket surveyor lain.'
+              : 'Belum ada paket pekerjaan. Buat paket baru di atas.'}
         </Text>
       ) : (
         <>
@@ -295,25 +351,34 @@ export default function PackageListScreen({ route, navigation }: Props) {
             const status = derivePackageStatus({ itemCount: item.itemCount || 0, isPosted: !!item.posted });
             const canModify = !item.posted;
             const statusLabel = status === 'posted' ? 'Survei Selesai' : status === 'in_progress' ? 'Dalam Proses' : 'Belum Ada Data';
+            const ownerName = item.surveyorName || surveyorName;
             return (
               <View key={item.id} style={styles.card}>
-                <TouchableOpacity
-                  onPress={() =>
-                    navigation.navigate('PackageDetail', {
-                      packageId: item.id,
-                      packageName: item.name,
-                      surveyorName,
-                    })
-                  }
-                >
-                  <Text style={styles.cardTitle}>{item.name}</Text>
-                </TouchableOpacity>
+                <View style={styles.cardHeaderRow}>
+                  <View style={[styles.avatar, { backgroundColor: getAvatarColor(ownerName) }]}>
+                    <Text style={styles.avatarText}>{getAvatarInitial(ownerName)}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <TouchableOpacity
+                      onPress={() =>
+                        navigation.navigate('PackageDetail', {
+                          packageId: item.id,
+                          packageName: item.name,
+                          surveyorName,
+                        })
+                      }
+                    >
+                      <Text style={styles.cardTitle}>{item.name}</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.cardOwnerText}>
+                      oleh {ownerName}{ownerName && ownerName === surveyorName ? ' (Anda)' : ''}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={styles.cardText}>{item.itemCount} item pekerjaan tersimpan</Text>
-                {item.surveyorName && item.surveyorName !== surveyorName && (
-                  <Text style={styles.cardText}>Surveyor: {item.surveyorName}</Text>
-                )}
                 <Text style={status === 'posted' ? styles.postedBadge : status === 'in_progress' ? styles.inProgressBadge : styles.draftBadge}>{statusLabel}</Text>
                 <Text style={styles.cardDate}>{new Date(item.createdAt).toLocaleString('id-ID')}</Text>
+
 
                 <View style={styles.cardActionRow}>
                   <TouchableOpacity
@@ -583,6 +648,54 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: theme.colors.border,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 4,
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#fff',
+    fontWeight: theme.font.semiBold,
+    fontSize: 14,
+  },
+  cardOwnerText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  scopeChipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  scopeChip: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: theme.colors.surface,
+  },
+  scopeChipActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  scopeChipText: {
+    color: theme.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: theme.font.medium,
+  },
+  scopeChipTextActive: {
+    color: '#fff',
   },
   cardTitle: {
     fontSize: 16,
