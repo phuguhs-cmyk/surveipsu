@@ -370,16 +370,32 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           {
             text: 'Hapus',
             style: 'destructive',
-            onPress: async () => {
-              setDeletingId(item.packageId);
-              try {
-                await deletePackageEverywhere(item.packageId, user?.username);
-                setPackages((prev) => prev.filter((p) => p.packageId !== item.packageId));
-              } catch (err: any) {
-                Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus paket.');
-              } finally {
-                setDeletingId(null);
-              }
+            onPress: () => {
+              // Konfirmasi kedua: aksi ini destruktif & permanen (menghapus
+              // seluruh data survei + foto milik paket), jadi admin harus
+              // menegaskan sekali lagi sebelum benar-benar terkirim ke server.
+              Alert.alert(
+                'Konfirmasi Sekali Lagi',
+                `Tindakan ini TIDAK BISA DIBATALKAN. Paket "${item.packageName}" beserta seluruh data survei dan foto di dalamnya akan dihapus permanen dari server. Lanjutkan?`,
+                [
+                  { text: 'Batal', style: 'cancel' },
+                  {
+                    text: 'Ya, Hapus Permanen',
+                    style: 'destructive',
+                    onPress: async () => {
+                      setDeletingId(item.packageId);
+                      try {
+                        await deletePackageEverywhere(item.packageId, user?.username);
+                        setPackages((prev) => prev.filter((p) => p.packageId !== item.packageId));
+                      } catch (err: any) {
+                        Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus paket.');
+                      } finally {
+                        setDeletingId(null);
+                      }
+                    },
+                  },
+                ]
+              );
             },
           },
         ]

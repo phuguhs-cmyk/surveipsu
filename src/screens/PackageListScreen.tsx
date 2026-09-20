@@ -231,13 +231,29 @@ export default function PackageListScreen({ route, navigation }: Props) {
         {
           text: 'Hapus',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await deletePackageEverywhere(pkg.id, user?.username);
-              await loadPackages();
-            } catch (err: any) {
-              Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan.');
-            }
+          onPress: () => {
+            // Konfirmasi kedua: aksi ini destruktif & permanen (menghapus
+            // seluruh data survei + foto milik paket), jadi surveyor harus
+            // menegaskan sekali lagi sebelum benar-benar terkirim ke server.
+            Alert.alert(
+              'Konfirmasi Sekali Lagi',
+              `Tindakan ini TIDAK BISA DIBATALKAN. Paket "${pkg.name}" beserta seluruh data survei dan foto di dalamnya akan dihapus permanen dari server. Lanjutkan?`,
+              [
+                { text: 'Batal', style: 'cancel' },
+                {
+                  text: 'Ya, Hapus Permanen',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await deletePackageEverywhere(pkg.id, user?.username);
+                      await loadPackages();
+                    } catch (err: any) {
+                      Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan.');
+                    }
+                  },
+                },
+              ]
+            );
           },
         },
       ]
