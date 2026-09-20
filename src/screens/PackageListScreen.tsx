@@ -22,36 +22,18 @@ import {
 } from '../services/packageService';
 import { fetchSurveyList } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
+import { getQueue } from '../services/queueService';
 import { AuthUser } from '../types';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { theme } from '../theme';
+import { getAvatarColor, getAvatarInitial } from '../utils/avatar';
+import { DashboardStatChips } from '../components/DashboardStatChips';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PackageList'>;
 
 const LIST_PAGE_SIZE = 12;
 
 type PackageScopeFilter = 'mine' | 'all';
-
-// Palet warna lembut untuk avatar inisial surveyor, diambil dari `theme`
-// ditambah beberapa aksen lain agar tiap surveyor mudah dibedakan secara
-// visual. Warna dipilih secara deterministik berdasarkan nama (bukan acak)
-// supaya surveyor yang sama SELALU tampil dengan warna yang sama.
-const AVATAR_PALETTE = ['#3b6fd6', '#3fa876', '#dba13a', '#e0685f', '#8b5cf6', '#0891b2', '#c2410c', '#4f46e5'];
-
-function getAvatarColor(name: string): string {
-  const trimmed = (name || '?').trim();
-  let hash = 0;
-  for (let i = 0; i < trimmed.length; i += 1) {
-    hash = (hash * 31 + trimmed.charCodeAt(i)) & 0xffffffff;
-  }
-  const index = Math.abs(hash) % AVATAR_PALETTE.length;
-  return AVATAR_PALETTE[index];
-}
-
-function getAvatarInitial(name: string): string {
-  const trimmed = (name || '').trim();
-  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
-}
 
 let packageListLoadLock: Promise<void> | null = null;
 
@@ -68,6 +50,11 @@ export default function PackageListScreen({ route, navigation }: Props) {
   // dengan menekan chip "Semua Paket" — ini murni preferensi tampilan,
   // bukan pembatasan akses/izin.
   const [scopeFilter, setScopeFilter] = useState<PackageScopeFilter>('mine');
+  // Jumlah item antrian survei offline yang belum berhasil terkirim
+  // (pending/failed), ditampilkan sebagai badge kecil pada tautan
+  // "Antrian" supaya surveyor langsung sadar ada data yang perlu
+  // disinkronkan tanpa harus membuka layar Antrian dulu.
+  const [queuePendingCount, setQueuePendingCount] = useState(0);
   const loadInFlightRef = useRef(false);
   const lastServerSyncRef = useRef(0);
 
@@ -114,6 +101,12 @@ export default function PackageListScreen({ route, navigation }: Props) {
         setUser((prev) => prev ?? currentUser);
         setPackages(localPackagesResult);
         setVisibleCount(LIST_PAGE_SIZE);
+
+        // Ambil jumlah antrian offline (pending/failed) secara best-effort;
+        // kegagalan di sini tidak boleh menghentikan proses memuat paket.
+        getQueue()
+          .then((queue) => setQueuePendingCount(queue.filter((q) => q.status !== 'sending').length))
+          .catch(() => undefined);
 
         const shouldSyncServerPackages = Date.now() - lastServerSyncRef.current > 30000 || localPackagesResult.length === 0;
         // OPTIMASI: Jangan read AsyncStorage lagi (redundant). Gunakan cache yang sudah dibaca di atas.
@@ -295,7 +288,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
             <Text style={styles.refreshButtonText}>{loading ? '⏳' : '↻'}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('Queue')}>
-            <Text style={styles.link}>Antrian</Text>
+            <Text style={styles.link}>Antrian{queuePendingCount > 0 ? ` (${queuePendingCount})` : ''}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleLogout}>
             <Text style={styles.logoutLink}>Keluar</Text>
@@ -303,6 +296,31 @@ export default function PackageListScreen({ route, navigation }: Props) {
         </View>
       </View>
       <Text style={styles.surveyorLabel}>Surveyor: {surveyorName}</Text>
+      <DashboardStatChips
+        items={[
+          {
+            key: 'packages',
+            value: scopedPackages.length,
+            label: scopeFilter === 'mine' ? 'Paket Saya' : 'Total Paket',
+          },
+          {
+            key: 'items',
+            value: scopedPackages.reduce((sum, p) => sum + (p.itemCount || 0), 0),
+            label: 'Item Pekerjaan',
+          },
+          ...(queuePendingCount > 0
+            ? [
+                {
+                  key: 'queue',
+                  value: queuePendingCount,
+                  label: 'Belum Terkirim',
+                  variant: 'warning' as const,
+                  onPress: () => navigation.navigate('Queue'),
+                },
+              ]
+            : []),
+        ]}
+      />
       <Text style={styles.label}>Daftar Paket Tersimpan</Text>
       <View style={styles.scopeChipRow}>
         <TouchableOpacity
@@ -336,7 +354,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
       ) : null}
 
       {loading && packages.length === 0 ? (
-        <ActivityIndicator size="small" color="#2563eb" style={{ marginTop: 12 }} />
+        <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 12 }} />
       ) : filteredPackages.length === 0 ? (
         <Text style={styles.emptyText}>
           {searchText.trim()

@@ -19,10 +19,18 @@ import { RootStackParamList } from '../navigation/types';
 import { deleteAllData, fetchSurveyList, listProposalsFromServer } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
 import { clearQueue, getQueue } from '../services/queueService';
-import { clearAllPackages, syncPackagesFromServer, getPackages, setPackageExecutedEverywhere } from '../services/packageService';
+import {
+  clearAllPackages,
+  syncPackagesFromServer,
+  getPackages,
+  setPackageExecutedEverywhere,
+  deletePackageEverywhere,
+} from '../services/packageService';
 import { clearAllAnnotations } from '../services/annotationService';
 import { AuthUser } from '../types';
 import { theme } from '../theme';
+import { getAvatarColor, getAvatarInitial } from '../utils/avatar';
+import { DashboardStatChips } from '../components/DashboardStatChips';
 
 type PackageStatusFilter = 'all' | 'draft' | 'in_progress' | 'posted';
 
@@ -37,25 +45,9 @@ function getStatusMeta(status: 'draft' | 'in_progress' | 'posted') {
   }
 }
 
-// Palet warna lembut untuk avatar inisial surveyor (sama seperti di
-// PackageListScreen), agar tampilan konsisten di kedua layar. Warna
-// dipilih deterministik dari nama surveyor supaya konsisten antar sesi.
-const AVATAR_PALETTE = ['#3b6fd6', '#3fa876', '#dba13a', '#e0685f', '#8b5cf6', '#0891b2', '#c2410c', '#4f46e5'];
-
-function getAvatarColor(name: string): string {
-  const trimmed = (name || '?').trim();
-  let hash = 0;
-  for (let i = 0; i < trimmed.length; i += 1) {
-    hash = (hash * 31 + trimmed.charCodeAt(i)) & 0xffffffff;
-  }
-  const index = Math.abs(hash) % AVATAR_PALETTE.length;
-  return AVATAR_PALETTE[index];
-}
-
-function getAvatarInitial(name: string): string {
-  const trimmed = (name || '').trim();
-  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
-}
+// Palet warna lembut untuk avatar inisial surveyor kini diekstrak ke
+// `utils/avatar.ts` (dipakai bersama PackageListScreen) agar tampilan
+// konsisten dan tidak terduplikasi.
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AdminDashboard'>;
 
@@ -66,6 +58,8 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   isAdmin,
   togglingId,
   onToggleExecuted,
+  onDeletePackage,
+  deletingId,
 }: {
   item: PackageSummary;
   navigation: Props['navigation'];
@@ -73,6 +67,8 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   isAdmin?: boolean;
   togglingId?: string | null;
   onToggleExecuted?: (item: PackageSummary) => void;
+  onDeletePackage?: (item: PackageSummary) => void;
+  deletingId?: string | null;
 }) {
   const statusMeta = getStatusMeta(item.status);
   return (
@@ -116,20 +112,22 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
         >
           <Text style={styles.cardLink}>Detail Paket</Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.cardActionButton}
-          onPress={() =>
-            navigation.navigate('CreatePackage', {
-              surveyorName: userName || 'Admin',
-              editPackageId: item.packageId,
-              packageName: item.packageName,
-              kecamatan: item.kecamatan || '',
-              desaKelurahan: item.desaKelurahan || '',
-            })
-          }
-        >
-          <Text style={styles.cardLink}>Ubah Paket</Text>
-        </TouchableOpacity>
+        {item.status !== 'posted' && (
+          <TouchableOpacity
+            style={styles.cardActionButton}
+            onPress={() =>
+              navigation.navigate('CreatePackage', {
+                surveyorName: userName || 'Admin',
+                editPackageId: item.packageId,
+                packageName: item.packageName,
+                kecamatan: item.kecamatan || '',
+                desaKelurahan: item.desaKelurahan || '',
+              })
+            }
+          >
+            <Text style={styles.cardLink}>Ubah Paket</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={styles.cardActionButton}
           onPress={() =>
@@ -141,6 +139,17 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
         >
           <Text style={styles.cardLink}>Kelola Data (Edit/Hapus)</Text>
         </TouchableOpacity>
+        {item.status !== 'posted' && onDeletePackage && (
+          <TouchableOpacity
+            style={styles.cardActionButton}
+            onPress={() => onDeletePackage(item)}
+            disabled={deletingId === item.packageId}
+          >
+            <Text style={[styles.cardLink, styles.cardDangerLink]}>
+              {deletingId === item.packageId ? 'Menghapus...' : 'Hapus Paket'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       {isAdmin && onToggleExecuted && (
         <TouchableOpacity
@@ -197,6 +206,8 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
   const [deletingAll, setDeletingAll] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const loadInFlightRef = useRef(false);
 
   const loadData = useCallback(async (isRefresh = false) => {
@@ -349,6 +360,34 @@ export default function AdminDashboardScreen({ navigation }: Props) {
     [user?.username]
   );
 
+  const handleDeletePackage = useCallback(
+    (item: PackageSummary) => {
+      Alert.alert(
+        'Hapus Paket Pekerjaan',
+        `Yakin ingin menghapus paket "${item.packageName}"? SELURUH data survei dan foto di dalam paket ini akan ikut terhapus permanen dan tidak dapat dikembalikan.`,
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Hapus',
+            style: 'destructive',
+            onPress: async () => {
+              setDeletingId(item.packageId);
+              try {
+                await deletePackageEverywhere(item.packageId, user?.username);
+                setPackages((prev) => prev.filter((p) => p.packageId !== item.packageId));
+              } catch (err: any) {
+                Alert.alert('Gagal Menghapus', err?.message || 'Terjadi kesalahan saat menghapus paket.');
+              } finally {
+                setDeletingId(null);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [user?.username]
+  );
+
   const handleLogout = () => {
     setMenuVisible(false);
     Alert.alert('Keluar', 'Yakin ingin keluar dari akun ini?', [
@@ -420,6 +459,12 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerAction}
+            onPress={() => navigation.navigate('CreatePackage', { surveyorName: user?.name || 'Admin' })}
+          >
+            <Text style={styles.manageUsersLink}>+ Buat Paket</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.headerAction}
             onPress={() => navigation.navigate('Map', {})}
           >
             <Text style={styles.manageUsersLink}>🗺️ Peta</Text>
@@ -484,16 +529,23 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         </TouchableOpacity>
       </Modal>
 
-      <View style={styles.totalRow}>
-        <View style={[styles.totalCard, { marginRight: 8 }]}>
-          <Text style={styles.totalLabel}>Total Paket</Text>
-          <Text style={styles.totalValue}>{packages.length}</Text>
-        </View>
-        <View style={styles.totalCard}>
-          <Text style={styles.totalLabel}>Total Data Survei</Text>
-          <Text style={styles.totalValue}>{totalItems}</Text>
-        </View>
-      </View>
+      <DashboardStatChips
+        items={[
+          { key: 'packages', value: packages.length, label: 'Total Paket' },
+          { key: 'items', value: totalItems, label: 'Total Data Survei' },
+          ...(queuePendingCount > 0
+            ? [
+                {
+                  key: 'queue',
+                  value: queuePendingCount,
+                  label: 'Belum Terkirim',
+                  variant: 'warning' as const,
+                  onPress: () => navigation.navigate('Queue'),
+                },
+              ]
+            : []),
+        ]}
+      />
 
       <TouchableOpacity
         style={[styles.allReportBtn, (loading || packages.length === 0) && styles.buttonDisabled]}
@@ -528,7 +580,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 24 }} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 24 }} />
       ) : (
         <FlatList
           data={filteredPackages}
@@ -557,6 +609,8 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               isAdmin={user?.role === 'admin'}
               togglingId={togglingId}
               onToggleExecuted={handleToggleExecuted}
+              onDeletePackage={handleDeletePackage}
+              deletingId={deletingId}
             />
           )}
         />
@@ -707,10 +761,6 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
   logoutText: { color: theme.colors.danger, fontWeight: theme.font.medium },
   manageUsersLink: { color: theme.colors.primary, fontWeight: theme.font.medium },
-  totalCard: { flex: 1, backgroundColor: theme.colors.primary, borderRadius: theme.radius.sm, padding: 10 },
-  totalRow: { flexDirection: 'row', marginBottom: 10 },
-  totalLabel: { color: theme.colors.primaryLight, fontSize: 11 },
-  totalValue: { color: '#fff', fontSize: 18, fontWeight: theme.font.semiBold, marginTop: 2 },
   allReportBtn: {
     backgroundColor: theme.colors.textPrimary,
     borderRadius: theme.radius.sm,
@@ -830,6 +880,8 @@ const styles = StyleSheet.create({
   toggleButtonTextActive: { color: theme.colors.danger },
   cardLocation: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   cardLink: { fontSize: 12, color: theme.colors.primary, marginTop: 6, fontWeight: theme.font.medium },
+  cardDangerLink: { color: theme.colors.danger },
+
   cardActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

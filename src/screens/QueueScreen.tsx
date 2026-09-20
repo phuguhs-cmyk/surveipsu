@@ -11,6 +11,7 @@ import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { getQueue, processQueue, retryQueueItem, deleteQueueItem } from '../services/queueService';
 import { QueuedSurvey } from '../types';
+import { theme } from '../theme';
 
 const STATUS_LABEL: Record<QueuedSurvey['status'], string> = {
   pending: 'Menunggu dikirim',
@@ -19,9 +20,9 @@ const STATUS_LABEL: Record<QueuedSurvey['status'], string> = {
 };
 
 const STATUS_COLOR: Record<QueuedSurvey['status'], string> = {
-  pending: '#f59e0b',
-  sending: '#2563eb',
-  failed: '#ef4444',
+  pending: theme.colors.warning,
+  sending: theme.colors.primary,
+  failed: theme.colors.danger,
 };
 
 export default function QueueScreen() {
@@ -153,26 +154,27 @@ export default function QueueScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: theme.colors.background,
     padding: 16,
   },
   title: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: theme.font.semiBold,
     marginBottom: 12,
+    color: theme.colors.textPrimary,
   },
   emptyText: {
     textAlign: 'center',
-    color: '#666',
+    color: theme.colors.textSecondary,
     marginTop: 40,
   },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: theme.colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -182,25 +184,26 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: theme.font.semiBold,
+    color: theme.colors.textPrimary,
   },
   statusBadge: {
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: theme.font.semiBold,
   },
   cardText: {
     fontSize: 13,
-    color: '#334155',
+    color: theme.colors.textPrimary,
     marginBottom: 2,
   },
   cardDate: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: theme.colors.textMuted,
     marginTop: 4,
   },
   errorText: {
     fontSize: 12,
-    color: '#ef4444',
+    color: theme.colors.danger,
     marginTop: 6,
   },
   actionRow: {
@@ -210,26 +213,27 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     flex: 1,
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.xs,
     paddingVertical: 8,
     alignItems: 'center',
   },
   retryButtonText: {
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: theme.font.semiBold,
     fontSize: 13,
   },
   deleteButton: {
     flex: 1,
-    backgroundColor: '#fee2e2',
-    borderRadius: 8,
+    backgroundColor: theme.colors.dangerBg,
+    borderRadius: theme.radius.xs,
     paddingVertical: 8,
     alignItems: 'center',
   },
   deleteButtonText: {
-    color: '#ef4444',
-    fontWeight: '600',
+    color: theme.colors.danger,
+    fontWeight: theme.font.semiBold,
     fontSize: 13,
   },
 });
+

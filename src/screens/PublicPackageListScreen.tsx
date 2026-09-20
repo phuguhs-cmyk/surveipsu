@@ -14,6 +14,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
 import { publicListPackages, publicFetchSurveyList, ServerPackage } from '../services/apiService';
 import { logout } from '../services/authService';
+import { theme } from '../theme';
+import { DashboardStatChips } from '../components/DashboardStatChips';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PublicPackageList'>;
 
@@ -155,6 +157,17 @@ export default function PublicPackageListScreen({ navigation }: Props) {
         </TouchableOpacity>
       </View>
 
+      <DashboardStatChips
+        items={[
+          { key: 'packages', value: packages.length, label: 'Total Paket' },
+          {
+            key: 'items',
+            value: packages.reduce((sum, p) => sum + (p.itemCount || 0), 0),
+            label: 'Total Data Survei',
+          },
+        ]}
+      />
+
       <TextInput
         style={styles.searchInput}
         placeholder="Cari nama paket pekerjaan..."
@@ -169,7 +182,7 @@ export default function PublicPackageListScreen({ navigation }: Props) {
       ) : null}
 
       {loading && packages.length === 0 ? (
-        <ActivityIndicator size="large" color="#2563eb" style={{ marginTop: 24 }} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 24 }} />
       ) : (
         <FlatList
           data={visiblePackages}
@@ -216,7 +229,7 @@ export default function PublicPackageListScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: theme.colors.background,
     padding: 16,
   },
   headerRow: {
@@ -226,87 +239,91 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: theme.font.semiBold,
     marginBottom: 6,
+    color: theme.colors.textPrimary,
   },
   logoutLink: {
-    color: '#dc2626',
+    color: theme.colors.danger,
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: theme.font.semiBold,
     marginLeft: 12,
     paddingVertical: 2,
   },
   subtitle: {
     fontSize: 13,
-    color: '#666',
+    color: theme.colors.textSecondary,
     marginBottom: 16,
     lineHeight: 18,
   },
   emptyText: {
     textAlign: 'center',
-    color: '#666',
+    color: theme.colors.textSecondary,
     marginTop: 24,
   },
   searchInput: {
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 14,
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     marginBottom: 8,
+    color: theme.colors.textPrimary,
   },
   searchResultText: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: theme.colors.textSecondary,
     marginBottom: 8,
   },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: theme.colors.border,
   },
   cardTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: theme.font.semiBold,
     marginBottom: 4,
+    color: theme.colors.textPrimary,
   },
   cardText: {
     fontSize: 13,
-    color: '#334155',
+    color: theme.colors.textPrimary,
   },
   cardDate: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: theme.colors.textMuted,
     marginTop: 4,
   },
   loadMoreButton: {
-    backgroundColor: '#e0e7ff',
-    borderRadius: 10,
+    backgroundColor: theme.colors.primarySoftBg,
+    borderRadius: theme.radius.md,
     paddingVertical: 10,
     paddingHorizontal: 14,
     alignItems: 'center',
     marginTop: 8,
   },
   loadMoreText: {
-    color: '#1d4ed8',
-    fontWeight: '600',
+    color: theme.colors.primaryDark,
+    fontWeight: theme.font.semiBold,
   },
   mapLink: {
     marginTop: 10,
     alignSelf: 'flex-start',
-    backgroundColor: '#eff6ff',
-    borderRadius: 8,
+    backgroundColor: theme.colors.primarySoftBg,
+    borderRadius: theme.radius.xs,
     paddingVertical: 8,
     paddingHorizontal: 12,
   },
   mapLinkText: {
-    color: '#1d4ed8',
-    fontWeight: '700',
+    color: theme.colors.primaryDark,
+    fontWeight: theme.font.bold,
     fontSize: 12,
   },
 });
+
