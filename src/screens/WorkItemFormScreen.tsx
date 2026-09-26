@@ -33,7 +33,7 @@ import { addToQueue, processQueue } from '../services/queueService';
 import { getPackageById, incrementPackageItemCount, updatePackageCenterLocation } from '../services/packageService';
 import { getCurrentUser } from '../services/authService';
 import { listUsers } from '../services/apiService';
-import { getWilayahList, getKecamatanNames, getDesaByKecamatan, findKodeDesa } from '../services/wilayahService';
+import { getWilayahList, findKodeDesa } from '../services/wilayahService';
 import { isValidSta, sortSegmentsBySta, validateStaRanges, parseStaToMeters, addStaDistance } from '../utils/sta';
 import { computeRoadSegmentPlanned, computeRetainingWallSegmentPlanned, computeDrainageSegmentPlanned } from '../utils/plannedDimensions';
 import { validateRepairDamageDimensions } from '../utils/repairValidation';
@@ -336,7 +336,9 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
   const { packageId, packageName, surveyorName, infrastructureType } = route.params;
   const [surveyorNameValue, setSurveyorNameValue] = useState(surveyorName);
   const surveyorNameValueRef = useRef(surveyorNameValue);
-  surveyorNameValueRef.current = surveyorNameValue;
+  useEffect(() => {
+    surveyorNameValueRef.current = surveyorNameValue;
+  }, [surveyorNameValue]);
   const [surveyorOptions, setSurveyorOptions] = useState<string[]>([]);
   const [surveyorModalVisible, setSurveyorModalVisible] = useState(false);
   // Nama Surveyor dikunci ke nama akun yang sedang login (bukan bebas
@@ -356,8 +358,6 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
   const [wilayahList, setWilayahList] = useState<WilayahItem[]>([]);
   const [kecamatan, setKecamatan] = useState('');
   const [desaKelurahan, setDesaKelurahan] = useState('');
-  const [kecamatanModalVisible, setKecamatanModalVisible] = useState(false);
-  const [desaModalVisible, setDesaModalVisible] = useState(false);
   const [photos, setPhotos] = useState<SurveyPhoto[]>([]);
   const [sketchVisible, setSketchVisible] = useState(false);
   const [schemaModal, setSchemaModal] = useState<{ kind: 'road' | 'drainage' | 'retainingWall'; data: Record<string, string | undefined> } | null>(null);
@@ -463,23 +463,6 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
       active = false;
     };
   }, [packageId]);
-
-  const kecamatanOptions = useMemo(() => getKecamatanNames(wilayahList), [wilayahList]);
-  const desaOptions = useMemo(
-    () => getDesaByKecamatan(wilayahList, kecamatan).map((item) => item.desa),
-    [wilayahList, kecamatan]
-  );
-
-  const handleSelectKecamatan = (value: string) => {
-    setKecamatan((prev) => (prev === value ? prev : value));
-    setDesaKelurahan('');
-    setKecamatanModalVisible(false);
-  };
-
-  const handleSelectDesa = (value: string) => {
-    setDesaKelurahan((prev) => (prev === value ? prev : value));
-    setDesaModalVisible(false);
-  };
 
   const updateRoadSegment = (id: string, patch: Partial<RoadSegment>) => {
     setRoadSegments((prev) => {
