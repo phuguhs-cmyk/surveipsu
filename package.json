@@ -36,22 +36,28 @@
     "react-native-webview": "13.16.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@react-native/jest-preset": "^0.86.3",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~57.0.2",
     "jest": "^30.5.1",
     "jest-expo": "^57.0.0",
     "test-renderer": "^1.2.0",
     "ts-jest": "^29.4.12",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "jest"
+    "test": "jest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "private": true
 }
