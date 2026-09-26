@@ -1010,16 +1010,22 @@ ${searchScript}
 
   window.__deleteAnnotation = function (id) {
     if (!ANNOTATIONS_EDITABLE) return;
-    if (window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'delete_annotation', id: id }));
+    var json = JSON.stringify({ type: 'delete_annotation', id: id });
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(json);
+    } else if (window.parent) {
+      window.parent.postMessage(json, '*');
     }
   };
 
   window.__editAnnotationLabel = function (id) {
     if (!ANNOTATIONS_EDITABLE) return;
     map.closePopup();
-    if (window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'edit_annotation_label', id: id }));
+    var json = JSON.stringify({ type: 'edit_annotation_label', id: id });
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(json);
+    } else if (window.parent) {
+      window.parent.postMessage(json, '*');
     }
   };
 
@@ -1100,8 +1106,11 @@ ${searchScript}
     function finishDraw() {
       if (!drawMode || currentPoints.length < 2) { cancelDraw(); return; }
       var points = currentPoints.map(function (p) { return { lat: p[0], lng: p[1] }; });
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'save_annotation', shapeType: drawMode, points: points }));
+      var json = JSON.stringify({ type: 'save_annotation', shapeType: drawMode, points: points });
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(json);
+      } else if (window.parent) {
+        window.parent.postMessage(json, '*');
       }
       cancelDraw();
     }
