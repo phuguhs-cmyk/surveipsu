@@ -51,7 +51,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 6,
   },
   chip: {
     flexGrow: 1,

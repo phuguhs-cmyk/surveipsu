@@ -1068,7 +1068,7 @@ export default function AdminDashboardScreen({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background, padding: theme.spacing.lg },
   header: {
-    marginBottom: 10,
+    marginBottom: 6,
   },
   headerTitle: {
     flexShrink: 1,
@@ -1078,7 +1078,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: 6,
-    marginTop: 8,
+    marginTop: 6,
   },
   headerAction: {
     borderWidth: 1,
@@ -1154,7 +1154,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.sm,
     paddingVertical: 6,
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   allReportBtnText: { color: '#fff', fontWeight: theme.font.semiBold, fontSize: 13 },
   deleteAllButton: {
@@ -1167,7 +1167,7 @@ const styles = StyleSheet.create({
   },
   deleteAllButtonText: { color: theme.colors.danger, fontWeight: theme.font.semiBold, fontSize: 14 },
   buttonDisabled: { opacity: 0.4 },
-  sectionLabel: { fontSize: 14, fontWeight: theme.font.medium, color: theme.colors.textPrimary, marginBottom: 8, marginTop: 4 },
+  sectionLabel: { fontSize: 14, fontWeight: theme.font.medium, color: theme.colors.textPrimary, marginBottom: 6, marginTop: 6 },
   searchInput: {
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -1176,14 +1176,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 14,
     backgroundColor: theme.colors.surface,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   emptyText: { textAlign: 'center', color: theme.colors.textSecondary, marginTop: 24 },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   filterChip: {
     borderWidth: 1,
