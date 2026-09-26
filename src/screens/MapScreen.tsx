@@ -773,28 +773,6 @@ export default function MapScreen({ route }: Props) {
         </Modal>
       )}
 
-      {legendVisible && (
-        <ScrollView style={styles.legend}>
-          <Text style={styles.legendTitle}>Fitur peta</Text>
-          <Text style={styles.legendItem}>• Peta dimuat langsung dari internet (tile online), sehingga selalu menampilkan basemap terkini. Diperlukan koneksi internet aktif.</Text>
-          <Text style={styles.legendItem}>• Peta mendukung cubit (pinch) zoom & geser (pan) dengan jari secara langsung di dalam tampilan peta.</Text>
-          {canAnnotate && (
-            <>
-              <Text style={styles.legendItem}>• Titik berwarna menandai lokasi asli (GPS) tiap item pekerjaan yang sudah disurvei, warna sesuai jenis infrastruktur.</Text>
-              {canEditAnnotations ? (
-                <>
-                  <Text style={styles.legendItem}>• Aktifkan "Mode Anotasi" untuk menampilkan tombol "Garis"/"Polygon" di dalam peta, lalu ketuk peta untuk menambah titik dan tekan "Selesai &amp; Simpan".</Text>
-                  <Text style={styles.legendItem}>• Setelah menekan "Selesai &amp; Simpan", isi label/keterangan pada anotasi (mis. nama saluran/rute) lalu tekan "Simpan".</Text>
-                  <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat opsi ubah label atau hapus.</Text>
-                </>
-              ) : (
-                <Text style={styles.legendItem}>• Ketuk anotasi (garis/polygon) yang sudah tersimpan untuk melihat labelnya. Akun Viewer hanya bisa melihat peta & anotasi, tidak bisa menambah atau mengubahnya.</Text>
-              )}
-            </>
-          )}
-          <Text style={styles.legendItem}>• Tekan "Muat Ulang Peta" jika ingin memuat ulang tampilan peta atau data terbaru.</Text>
-        </ScrollView>
-      )}
     </View>
   );
 }
@@ -869,25 +847,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     marginTop: 12,
     fontWeight: '600',
-  },
-  legend: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    padding: 14,
-    marginTop: 4,
-    maxHeight: 200,
-  },
-  legendTitle: {
-    color: theme.colors.textPrimary,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  legendItem: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    marginBottom: 6,
   },
   modalBackdrop: {
     flex: 1,
