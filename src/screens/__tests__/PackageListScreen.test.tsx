@@ -150,7 +150,7 @@ describe('PackageListScreen', () => {
     await renderScreen();
     await screen.findByText('Paket Jalan A');
 
-    fireEvent.press(screen.getByText('Hapus Paket'));
+    fireEvent.press(screen.getByLabelText('Hapus paket'));
 
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith(
@@ -170,7 +170,7 @@ describe('PackageListScreen', () => {
     await renderScreen();
     await screen.findByText('Paket Jalan A');
 
-    expect(screen.queryByText('Hapus Paket')).toBeNull();
+    expect(screen.queryByLabelText('Hapus paket')).toBeNull();
     expect(screen.queryByText('Ubah Paket')).toBeNull();
   });
 

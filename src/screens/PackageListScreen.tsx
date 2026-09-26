@@ -393,17 +393,30 @@ export default function PackageListScreen({ route, navigation }: Props) {
             <Text style={styles.avatarText}>{getAvatarInitial(ownerName)}</Text>
           </View>
           <View style={{ flex: 1 }}>
-                    <TouchableOpacity
-                      onPress={() =>
-                        navigation.navigate('PackageDetail', {
-                          packageId: item.id,
-                          packageName: item.name,
-                          surveyorName,
-                        })
-                      }
-                    >
-                      <Text style={styles.cardTitle}>{item.name}</Text>
-                    </TouchableOpacity>
+                    <View style={styles.titleRow}>
+                      <TouchableOpacity
+                        style={{ flex: 1 }}
+                        onPress={() =>
+                          navigation.navigate('PackageDetail', {
+                            packageId: item.id,
+                            packageName: item.name,
+                            surveyorName,
+                          })
+                        }
+                      >
+                        <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+                      </TouchableOpacity>
+                      {canDeletePackage && canModify && (
+                        <TouchableOpacity
+                          onPress={() => handleDeletePackage(item)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel="Hapus paket"
+                          style={styles.deleteIconButton}
+                        >
+                          <Text style={styles.deleteIconText}>🗑️</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                     <Text style={styles.cardOwnerText}>
                       oleh {ownerName}{ownerName && ownerName === surveyorName ? ' (Anda)' : ''}
                     </Text>
@@ -477,17 +490,10 @@ export default function PackageListScreen({ route, navigation }: Props) {
                     <Text style={styles.viewDataButtonText}>Kelola Data</Text>
                   </TouchableOpacity>
                 </View>
-
-                {canDeletePackage && canModify && (
-                  <View style={styles.cardActionRowSecondary}>
-                    <TouchableOpacity style={styles.deletePackageButton} onPress={() => handleDeletePackage(item)}>
-                      <Text style={styles.deletePackageButtonText}>Hapus Paket</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
       </View>
     );
   };
+
 
   return (
     <View style={styles.container}>
@@ -797,6 +803,18 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     marginBottom: 4,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  deleteIconButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  deleteIconText: {
+    fontSize: 16,
+  },
   cardText: {
     fontSize: 13,
     color: theme.colors.textPrimary,
@@ -843,21 +861,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
   },
-  deletePackageButton: {
-    flex: 1,
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.radius.sm,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.danger,
-    alignItems: 'center',
-  },
-  deletePackageButtonText: {
-    color: theme.colors.danger,
-    fontWeight: theme.font.medium,
-    fontSize: 13,
-  },
+
   postedBadge: {
     color: theme.colors.success,
     fontSize: 11,

@@ -88,7 +88,24 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
           <Text style={styles.avatarText}>{getAvatarInitial(item.surveyorName || '')}</Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.cardTitle}>{item.packageName}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.cardTitle} numberOfLines={1}>{item.packageName}</Text>
+            {item.status !== 'posted' && onDeletePackage && (
+              <TouchableOpacity
+                onPress={() => onDeletePackage(item)}
+                disabled={deletingId === item.packageId}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Hapus paket"
+                style={styles.deleteIconButton}
+              >
+                {deletingId === item.packageId ? (
+                  <ActivityIndicator size="small" color={theme.colors.danger} />
+                ) : (
+                  <Text style={styles.deleteIconText}>🗑️</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
           {!!item.surveyorName && <Text style={styles.cardOwnerText}>oleh {item.surveyorName}</Text>}
         </View>
         <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
@@ -157,19 +174,8 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
           <Text style={styles.cardActionButtonText}>Kelola Data</Text>
         </TouchableOpacity>
       </View>
-      {((item.status !== 'posted' && onDeletePackage) || (isAdmin && onToggleExecuted)) && (
+      {isAdmin && onToggleExecuted && (
         <View style={styles.cardActionRowSecondary}>
-          {item.status !== 'posted' && onDeletePackage && (
-            <TouchableOpacity
-              style={[styles.cardActionButton, styles.cardActionButtonDanger]}
-              onPress={() => onDeletePackage(item)}
-              disabled={deletingId === item.packageId}
-            >
-              <Text style={[styles.cardActionButtonText, styles.cardActionButtonTextDanger]}>
-                {deletingId === item.packageId ? 'Menghapus...' : 'Hapus Paket'}
-              </Text>
-            </TouchableOpacity>
-          )}
           {isAdmin && onToggleExecuted && (
             <TouchableOpacity
               style={[styles.cardActionButton, item.executed && styles.toggleButtonActive]}
@@ -1289,17 +1295,23 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     alignItems: 'center',
   },
-  cardActionButtonDanger: {
-    borderColor: theme.colors.danger,
-  },
   cardActionButtonText: {
     color: theme.colors.primary,
     fontSize: 12,
     fontWeight: theme.font.medium,
     textAlign: 'center',
   },
-  cardActionButtonTextDanger: {
-    color: theme.colors.danger,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  deleteIconButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  deleteIconText: {
+    fontSize: 16,
   },
   reportMenuCard: {
     width: '100%',
