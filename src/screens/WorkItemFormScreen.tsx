@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -335,6 +335,8 @@ function ModeSummaryFields({
 export default function WorkItemFormScreen({ route, navigation }: Props) {
   const { packageId, packageName, surveyorName, infrastructureType } = route.params;
   const [surveyorNameValue, setSurveyorNameValue] = useState(surveyorName);
+  const surveyorNameValueRef = useRef(surveyorNameValue);
+  surveyorNameValueRef.current = surveyorNameValue;
   const [surveyorOptions, setSurveyorOptions] = useState<string[]>([]);
   const [surveyorModalVisible, setSurveyorModalVisible] = useState(false);
   // Nama Surveyor dikunci ke nama akun yang sedang login (bukan bebas
@@ -413,7 +415,7 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
           // tidak bisa diketik bebas (mencegah "menyamar" jadi surveyor
           // lain). Hanya isi otomatis jika field masih kosong, supaya tidak
           // menimpa nilai yang mungkin sudah diisi dari parameter navigasi.
-          if (!surveyorNameValue && currentUser.name) {
+          if (!surveyorNameValueRef.current && currentUser.name) {
             setSurveyorNameValue(currentUser.name);
           }
         }

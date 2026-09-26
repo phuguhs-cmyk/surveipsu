@@ -99,7 +99,7 @@ export default function PackageDataScreen({ route, navigation }: Props) {
   const loadInFlightRef = useRef(false);
   const isAdmin = user?.role === 'admin';
 
-  const offlineRowsForPackage = (items: any[]) => items
+  const offlineRowsForPackage = useCallback((items: any[]) => items
     .filter((item) => item.data?.packageId === packageId)
     .map((item) => {
       const data = item.data || {};
@@ -120,7 +120,7 @@ export default function PackageDataScreen({ route, navigation }: Props) {
         row[field.header] = detail[field.key] ?? '';
       });
       return row;
-    });
+    }), [packageId, packageName]);
 
   const loadData = useCallback(async () => {
     if (loadInFlightRef.current) return;
@@ -143,7 +143,7 @@ export default function PackageDataScreen({ route, navigation }: Props) {
       setLoading(false);
       loadInFlightRef.current = false;
     }
-  }, [packageId]);
+  }, [packageId, offlineRowsForPackage]);
 
   useFocusEffect(
     useCallback(() => {

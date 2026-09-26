@@ -213,7 +213,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
       packageListLoadLock = null;
     });
     return packageListLoadLock;
-  }, [surveyorName]);
+  }, []);
 
 
   useFocusEffect(

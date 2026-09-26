@@ -472,7 +472,7 @@ export default function MapScreen({ route }: Props) {
       setLoading(false);
       loadInFlightRef.current = false;
     }
-  }, [canAnnotate, packageId, rebuildMapHtml, surveyedLocations, isViewer]);
+  }, [packageId, rebuildMapHtml, surveyedLocations, isViewer]);
 
   useFocusEffect(
     useCallback(() => {
@@ -534,7 +534,7 @@ export default function MapScreen({ route }: Props) {
         // Pesan tidak dikenali/tidak valid: diabaikan.
       }
     },
-    [canEditAnnotations, packageId, surveyedLocations, allLocationNotes, packageName, rebuildMapHtml]
+    [canEditAnnotations, packageId, surveyedLocations, allLocationNotes, rebuildMapHtml]
   );
 
   const handleWebViewMessage = useCallback(
@@ -609,7 +609,7 @@ export default function MapScreen({ route }: Props) {
       setLabelInputValue('');
       setLabelChoices([]);
     }
-  }, [labelInputValue, pendingShape, editingAnnotationId, packageId, surveyedLocations, packageName, rebuildMapHtml]);
+  }, [labelInputValue, pendingShape, editingAnnotationId, packageId, surveyedLocations, rebuildMapHtml]);
 
   const toggleAnnotateMode = useCallback(() => {
     setAnnotateMode((prev) => !prev);

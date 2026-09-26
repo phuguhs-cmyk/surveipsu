@@ -169,7 +169,7 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
       setLoading(false);
       loadInFlightRef.current = false;
     }
-  }, [packageId]);
+  }, [packageId, packageName]);
 
   useFocusEffect(
     useCallback(() => {
