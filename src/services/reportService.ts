@@ -3,6 +3,8 @@ import { sortReportRowsBySegment } from '../utils/sta';
 import { MODE_REPORT_COLUMNS } from '../config';
 import { summarizeItemsByType, formatDimensionSummary } from '../utils/itemSummary';
 import { safeJsonParse } from './commonUtils';
+import { ExecutedOutputEntry } from './apiService';
+
 
 
 // ─── Foto: fetch & konversi ke base64 ────────────────────────────────────────
@@ -541,3 +543,170 @@ export async function printAllPackagesReport(packages: PackageSummary[], allRows
   const html = buildAllPackagesHtml(packages, resolvedRows);
   await printHtml(html, 'Laporan Semua Paket Pekerjaan');
 }
+
+
+// ─── Laporan Pelaksanaan Pekerjaan (fisik/konstruksi, terpisah dari survei) ──
+
+interface ExecutedPackageSummary {
+  packageId: string;
+  packageName: string;
+  executed?: boolean;
+  executedYear?: number;
+  executedContractor?: string;
+  executedOutput?: ExecutedOutputEntry[];
+}
+
+function buildExecutedOutputTable(rows: ExecutedOutputEntry[] | undefined): string {
+  if (!rows || rows.length === 0) {
+    return '<p style="color:#94a3b8;font-style:italic">Belum ada rincian output pelaksanaan.</p>';
+  }
+  const body = rows.map((row, index) => `
+    <tr>
+      <td style="text-align:center">${index + 1}</td>
+      <td>${esc(row.infraType)}</td>
+      <td style="text-align:center">${row.panjang ? esc(row.panjang) : '-'}</td>
+      <td style="text-align:center">${row.tinggi ? esc(row.tinggi) : '-'}</td>
+      <td>${row.catatan ? esc(row.catatan) : '-'}</td>
+    </tr>`).join('');
+  return `
+    <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
+      <thead>
+        <tr style="background:#1e40af;color:#fff">
+          <th style="width:30px">No</th>
+          <th style="text-align:left">Jenis Infrastruktur</th>
+          <th>Panjang (m)</th>
+          <th>Tinggi/Lebar (m)</th>
+          <th style="text-align:left">Catatan</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+/**
+ * Laporan pelaksanaan fisik/konstruksi SATU paket pekerjaan. Terpisah dari
+ * laporan hasil survei (printPackageReport) karena mencatat progres
+ * pelaksanaan di lapangan (tahun anggaran, penyedia jasa/kontraktor, rincian
+ * output per jenis infrastruktur) yang diisi admin lewat modal "Info
+ * Pelaksanaan", bukan data hasil survei kondisi.
+ */
+export async function printPackageExecutionReport(pkg: ExecutedPackageSummary): Promise<void> {
+  const generatedAt = new Date().toLocaleString('id-ID');
+  const html = `<html><head><meta charset="utf-8"/><style>${BASE_STYLE}</style></head><body>
+    <h1>Laporan Pelaksanaan Pekerjaan</h1>
+    <div class="meta">
+      Paket: <strong>${esc(pkg.packageName)}</strong> &nbsp;|&nbsp;
+      Dicetak: ${esc(generatedAt)}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+      <tbody>
+        <tr><td style="font-weight:700;width:180px">Status Pelaksanaan</td><td>${pkg.executed ? '✓ Sudah Dilaksanakan' : 'Belum Dilaksanakan'}</td></tr>
+        ${pkg.executed ? `<tr><td style="font-weight:700">Tahun Pelaksanaan</td><td>${pkg.executedYear ? esc(pkg.executedYear) : '-'}</td></tr>` : ''}
+        ${pkg.executed ? `<tr><td style="font-weight:700">Penyedia Jasa/Kontraktor</td><td>${pkg.executedContractor ? esc(pkg.executedContractor) : '-'}</td></tr>` : ''}
+      </tbody>
+    </table>
+    ${pkg.executed ? `
+      <h2 style="margin-bottom:8px">Rincian Output Pelaksanaan</h2>
+      ${buildExecutedOutputTable(pkg.executedOutput)}
+    ` : '<p style="color:#94a3b8;font-style:italic">Paket ini belum ditandai sebagai sudah dilaksanakan.</p>'}
+    <div class="footer">Dokumen dihasilkan otomatis oleh Aplikasi Survei Infrastruktur.</div>
+  </body></html>`;
+  await printHtml(html, `Laporan Pelaksanaan - ${pkg.packageName}`);
+}
+
+/**
+ * Rekapitulasi PELAKSANAAN FISIK seluruh paket pekerjaan (bukan rekap hasil
+ * survei seperti printAllPackagesReport). Menonjolkan paket mana yang sudah
+ * dilaksanakan (tahun, penyedia jasa, total output per jenis infrastruktur)
+ * dan mana yang masih belum, sehingga progres pelaksanaan fisik di lapangan
+ * bisa dipantau lintas paket dalam satu dokumen.
+ */
+export async function printExecutionRecapReport(packages: ExecutedPackageSummary[]): Promise<void> {
+  const generatedAt = new Date().toLocaleString('id-ID');
+  const executedPackages = packages.filter((p) => p.executed);
+  const notExecutedPackages = packages.filter((p) => !p.executed);
+
+  const infrastructureTypes = Array.from(
+    new Set(executedPackages.flatMap((p) => (p.executedOutput || []).map((o) => o.infraType)))
+  );
+
+  const totalsByType = new Map<string, number>();
+  executedPackages.forEach((p) => {
+    (p.executedOutput || []).forEach((o) => {
+      const n = parseFloat(String(o.panjang || '').replace(',', '.'));
+      if (!isNaN(n)) totalsByType.set(o.infraType, (totalsByType.get(o.infraType) || 0) + n);
+    });
+  });
+
+  const typeHeaders = infrastructureTypes.map((t) => `<th>${esc(t)} (m)</th>`).join('');
+
+  const executedRows = executedPackages.map((pkg, idx) => {
+    const outputByType = new Map<string, string[]>();
+    (pkg.executedOutput || []).forEach((o) => {
+      const list = outputByType.get(o.infraType) || [];
+      list.push(o.panjang ? String(o.panjang) : '-');
+      outputByType.set(o.infraType, list);
+    });
+    return `
+      <tr>
+        <td style="text-align:center">${idx + 1}</td>
+        <td style="font-weight:600;color:#1e40af">${esc(pkg.packageName)}</td>
+        <td style="text-align:center">${pkg.executedYear ? esc(pkg.executedYear) : '-'}</td>
+        <td>${pkg.executedContractor ? esc(pkg.executedContractor) : '-'}</td>
+        ${infrastructureTypes.map((t) => `<td style="text-align:center">${(outputByType.get(t) || ['-']).join(', ')}</td>`).join('')}
+      </tr>`;
+  }).join('');
+
+  const totalRow = `
+    <tr style="background:#dbeafe;font-weight:700">
+      <td></td><td>TOTAL</td><td></td><td></td>
+      ${infrastructureTypes.map((t) => {
+        const sum = totalsByType.get(t) || 0;
+        return `<td style="text-align:center">${sum ? sum.toFixed(2) : '-'}</td>`;
+      }).join('')}
+    </tr>`;
+
+  const executedTable = executedPackages.length > 0 ? `
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+      <thead>
+        <tr style="background:#1e40af;color:#fff">
+          <th style="width:30px">No</th>
+          <th style="text-align:left">Nama Paket Pekerjaan</th>
+          <th>Tahun</th>
+          <th style="text-align:left">Penyedia Jasa</th>
+          ${typeHeaders}
+        </tr>
+      </thead>
+      <tbody>${executedRows}${totalRow}</tbody>
+    </table>` : '<p style="color:#94a3b8;font-style:italic">Belum ada paket yang dilaksanakan.</p>';
+
+  const notExecutedList = notExecutedPackages.length > 0
+    ? `<ul>${notExecutedPackages.map((p) => `<li>${esc(p.packageName)}</li>`).join('')}</ul>`
+    : '<p style="color:#94a3b8;font-style:italic">Semua paket sudah dilaksanakan.</p>';
+
+  const html = `<html><head><meta charset="utf-8"/>
+    <style>
+      ${BASE_STYLE}
+      thead th { font-size:10px; padding:5px 4px; text-align:center; }
+      tbody td { font-size:10px; padding:4px; border-bottom:1px solid #e2e8f0; }
+      tbody tr:nth-child(even) { background:#f8fafc; }
+      ul { margin:0; padding-left:18px; font-size:10px; }
+      li { margin-bottom:2px; }
+    </style>
+  </head><body>
+    <h1>Rekapitulasi Pelaksanaan Pekerjaan Fisik</h1>
+    <div class="meta">
+      Total Paket: <strong>${packages.length}</strong> &nbsp;|&nbsp;
+      Sudah Dilaksanakan: <strong>${executedPackages.length}</strong> &nbsp;|&nbsp;
+      Belum Dilaksanakan: <strong>${notExecutedPackages.length}</strong> &nbsp;|&nbsp;
+      Dicetak: ${esc(generatedAt)}
+    </div>
+    <h2 style="margin-bottom:8px">Paket Sudah Dilaksanakan</h2>
+    ${executedTable}
+    <h2 style="margin-bottom:8px">Paket Belum Dilaksanakan</h2>
+    ${notExecutedList}
+    <div class="footer">Dokumen dihasilkan otomatis oleh Aplikasi Survei Infrastruktur.</div>
+  </body></html>`;
+  await printHtml(html, 'Rekapitulasi Pelaksanaan Pekerjaan Fisik');
+}
+

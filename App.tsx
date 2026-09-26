@@ -229,7 +229,7 @@ export default function App() {
         <Stack.Screen
           name="PackageDetail"
           component={PackageDetailScreen}
-          options={{ title: 'Detail Paket', headerTitle: () => <ScreenHeaderTitle title="Detail Paket" /> }}
+          options={{ title: 'Ubah Paket', headerTitle: () => <ScreenHeaderTitle title="Ubah Paket" /> }}
         />
         <Stack.Screen
           name="Map"

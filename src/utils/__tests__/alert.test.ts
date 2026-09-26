@@ -9,12 +9,12 @@
  * Platform.OS === 'web' (berbeda dari mock global 'android' di
  * test/mocks/react-native.js yang dipakai unit test lain).
  */
+import { Alert } from '../alert';
+
 jest.mock('react-native', () => ({
   Platform: { OS: 'web' },
   Alert: { alert: jest.fn() },
 }));
-
-import { Alert } from '../alert';
 
 describe('Alert.alert (web)', () => {
   let alertSpy: jest.SpyInstance;

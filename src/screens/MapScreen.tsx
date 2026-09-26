@@ -12,7 +12,7 @@ import { getPackageById, getPackages, buildPackageMapMarkers } from '../services
 import { fetchSurveyList, publicFetchSurveyList } from '../services/apiService';
 import { getQueue } from '../services/queueService';
 import { CONFIG } from '../config';
-import { buildMapHtml, LeafletMarker, LeafletAnnotation } from '../services/leafletHtml';
+import { buildMapHtml, LeafletMarker, LeafletAnnotation, OnlineMapMode } from '../services/leafletHtml';
 import { parseCoordinate } from '../services/commonUtils';
 import { theme } from '../theme';
 import { getCurrentUser } from '../services/authService';
@@ -346,30 +346,31 @@ export default function MapScreen({ route }: Props) {
           : null;
         centerLat = Number.isFinite(pkg?.latitude) ? pkg!.latitude! : centerFromPoints?.lat ?? BANJARNEGARA_CENTER.lat;
         centerLng = Number.isFinite(pkg?.longitude) ? pkg!.longitude! : centerFromPoints?.lng ?? BANJARNEGARA_CENTER.lng;
-        zoom = points.length ? 16 : 13;
+        // Zoom lebih dekat (sebelumnya 16/13) supaya peta langsung
+        // terpusat rapat pada titik koordinat paket pekerjaan ini saat
+        // pertama dibuka, tanpa perlu pengguna memperbesar peta secara
+        // manual.
+        zoom = points.length ? 18 : 17;
       }
 
-      const markers: LeafletMarker[] = locations.map((loc) => {
-        if (isAllPackages) {
-          const statusText = loc.status === 'posted' ? 'Survei Selesai' : loc.status === 'in_progress' ? 'Dalam Proses' : 'Belum Ada Data';
-          return {
-            lat: loc.lat,
-            lng: loc.lng,
-            color: loc.status ? markerColorForPackageStatus(loc.status) : markerColorFor(loc.infrastructureType),
-            popupHtml: `<b>${loc.packageName || 'Paket Pekerjaan'}</b><br/>${statusText}`,
-            packageName: loc.packageName,
-            groupKey: loc.infrastructureType || 'Lainnya',
-          };
-        }
-        return {
-          lat: loc.lat,
-          lng: loc.lng,
-          color: markerColorFor(loc.infrastructureType),
-          popupHtml: `<b>${loc.infrastructureType}</b><br/>${loc.locationNote || ''}`,
-          label: loc.infrastructureType || undefined,
-          groupKey: loc.infrastructureType || 'Lainnya',
-        };
-      });
+      const markers: LeafletMarker[] = isAllPackages
+        ? locations.map((loc) => {
+            const statusText = loc.status === 'posted' ? 'Survei Selesai' : loc.status === 'in_progress' ? 'Dalam Proses' : 'Belum Ada Data';
+            return {
+              lat: loc.lat,
+              lng: loc.lng,
+              color: loc.status ? markerColorForPackageStatus(loc.status) : markerColorFor(loc.infrastructureType),
+              popupHtml: `<b>${loc.packageName || 'Paket Pekerjaan'}</b><br/>${statusText}`,
+              packageName: loc.packageName,
+              groupKey: loc.infrastructureType || 'Lainnya',
+            };
+          })
+        // Peta satu paket pekerjaan: TIDAK menampilkan titik/label jenis
+        // infrastruktur maupun titik/label nama paket di atas peta (baik
+        // sebagai marker permanen maupun tooltip) — sesuai permintaan agar
+        // peta hanya menampilkan anotasi (garis/polygon) tanpa titik lokasi
+        // survei yang menumpuk/mengganggu.
+        : [];
 
       const leafletAnnotations: LeafletAnnotation[] = canAnnotate
         ? currentAnnotations.map((a) => ({ id: a.id, type: a.type, points: a.points, color: a.color, label: a.label }))
@@ -386,6 +387,18 @@ export default function MapScreen({ route }: Props) {
           console.warn('Gagal menyiapkan peta offline (PMTiles):', err?.message || err);
         }
       }
+
+      // Jika file PMTiles offline sudah siap (Android/iOS), APK secara
+      // DEFAULT langsung membuka peta dalam mode "Peta Offline" (PMTiles
+      // lokal, tidak butuh internet sama sekali) — bukan hanya saat
+      // terdeteksi offline. Ini memastikan aplikasi konsisten memakai data
+      // offline mandiri setiap kali dibuka, dan pengguna tetap bisa
+      // berpindah ke mode online (Peta/Satelit/Hybrid) manual lewat tombol
+      // mode bila memang tersedia koneksi. Jika PMTiles belum siap (mis.
+      // gagal disalin) atau berjalan di web, tetap jatuh ke mode online
+      // "street" seperti semula.
+      const initialMapMode: OnlineMapMode | 'offline' =
+        offlinePmtilesUri ? 'offline' : 'street';
 
       const html = buildMapHtml({
         tileData: {},
@@ -416,7 +429,7 @@ export default function MapScreen({ route }: Props) {
         // jadi web tetap memakai citra satelit polos tanpa overlay ini.
         buildingOverlayStyleUrl: Platform.OS === 'web' ? undefined : CONFIG.ONLINE_MAP_MODES.street.vectorStyleUrl,
         offlinePmtilesUri,
-        mapMode: 'street',
+        mapMode: initialMapMode,
         markers,
         annotations: leafletAnnotations,
         // Toolbar gambar garis/polygon hanya ditampilkan saat mode anotasi
@@ -424,7 +437,6 @@ export default function MapScreen({ route }: Props) {
         // menampilkannya.
         showDrawingTools: canEditAnnotations && annotateMode,
         packageSearchEnabled: isAllPackages,
-        showLayerFilter: !isAllPackages,
         annotationsEditable: canEditAnnotations,
       });
 
@@ -479,9 +491,20 @@ export default function MapScreen({ route }: Props) {
    * saat `canEditAnnotations` (peta satu paket & bukan akun Viewer). */
   const processMapMessage = useCallback(
     async (msg: any) => {
-      if (!canEditAnnotations || !packageId) return;
+      if (!canEditAnnotations || !packageId) {
+        if (msg.type === 'map_debug') {
+          // Kegagalan asinkron mode "Peta Offline"/MapLibre GL (lihat
+          // window.__debugMap di leafletHtml.ts) dilog di sini supaya
+          // terlihat lewat Metro/adb logcat, walau layar peta ini tidak
+          // mengizinkan pengeditan anotasi (mis. akun Viewer).
+          console.warn('[MapScreen] map_debug:', msg.event, msg.detail);
+        }
+        return;
+      }
       try {
-        if (msg.type === 'save_annotation') {
+        if (msg.type === 'map_debug') {
+          console.warn('[MapScreen] map_debug:', msg.event, msg.detail);
+        } else if (msg.type === 'save_annotation') {
           // Label anotasi HARUS berupa alamat/keterangan lokasi hasil survei
           // (kolom "Alamat/Keterangan Lokasi"), BUKAN nama paket pekerjaan —
           // karena itu `fallbackLabel` (nama paket) sengaja TIDAK dikirim di

@@ -320,7 +320,7 @@ export default function UserManagementScreen({ navigation }: Props) {
                 onPress={() => setFormRole('viewer')}
               >
                 <Text style={[styles.roleChipText, formRole === 'viewer' && styles.roleChipTextActive]}>
-                  Viewer (Lihat Data Survei Selesai)
+                  Viewer (Lihat Semua Data, Read-only)
                 </Text>
               </TouchableOpacity>
             </View>
@@ -339,10 +339,12 @@ export default function UserManagementScreen({ navigation }: Props) {
 
             {formRole === 'viewer' && (
               <Text style={styles.cardPermissions}>
-                Akun Viewer hanya bisa melihat laporan/data yang statusnya sudah "Survei Selesai", tanpa nama
-                surveyor, dan tidak dapat menambah, mengubah, menghapus, atau memposting data apa pun.
+                Akun Viewer bisa melihat SELURUH data/laporan apa pun statusnya (draft, proses, maupun
+                sudah "Survei Selesai"), tanpa menampilkan nama surveyor, dan tidak dapat menambah,
+                mengubah, menghapus, atau memposting data apa pun.
               </Text>
             )}
+
 
             <View style={styles.modalActionRow}>
               <TouchableOpacity style={styles.cancelButton} onPress={closeModal} disabled={saving}>

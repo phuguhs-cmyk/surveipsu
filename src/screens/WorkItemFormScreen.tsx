@@ -337,6 +337,12 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
   const [surveyorNameValue, setSurveyorNameValue] = useState(surveyorName);
   const [surveyorOptions, setSurveyorOptions] = useState<string[]>([]);
   const [surveyorModalVisible, setSurveyorModalVisible] = useState(false);
+  // Nama Surveyor dikunci ke nama akun yang sedang login (bukan bebas
+  // diketik) supaya setiap item pekerjaan punya jejak akuntabilitas yang
+  // jelas: siapa pun yang login dan membuat data, namanya otomatis tercatat.
+  // Admin tetap boleh mengubahnya secara manual (mis. menginput atas nama
+  // surveyor lapangan yang belum punya akun sendiri).
+  const [isAdminUser, setIsAdminUser] = useState(false);
 
   const isRoad = infrastructureType === 'Jalan';
   const isDrainage = infrastructureType === 'Drainase/Saluran Air';
@@ -400,6 +406,17 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
       try {
         const currentUser = await getCurrentUser();
         if (!currentUser) return;
+
+        if (active) {
+          setIsAdminUser(currentUser.role === 'admin');
+          // Auto-isi & kunci Nama Surveyor ke nama akun yang login, supaya
+          // tidak bisa diketik bebas (mencegah "menyamar" jadi surveyor
+          // lain). Hanya isi otomatis jika field masih kosong, supaya tidak
+          // menimpa nilai yang mungkin sudah diisi dari parameter navigasi.
+          if (!surveyorNameValue && currentUser.name) {
+            setSurveyorNameValue(currentUser.name);
+          }
+        }
 
         const options = new Set<string>([currentUser.name, currentUser.username].filter(Boolean));
         try {
@@ -1034,16 +1051,24 @@ export default function WorkItemFormScreen({ route, navigation }: Props) {
         <Text style={styles.label}>Nama Surveyor</Text>
         <View style={styles.inlineSearchRow}>
           <TextInput
-            style={[styles.input, styles.flexInput]}
+            style={[styles.input, styles.flexInput, !isAdminUser && styles.inputDisabled]}
             value={surveyorNameValue}
             onChangeText={setSurveyorNameValue}
             placeholder="Ketik / cari nama surveyor"
             autoCapitalize="words"
+            editable={isAdminUser}
           />
-          <TouchableOpacity style={styles.searchButton} onPress={() => setSurveyorModalVisible(true)}>
-            <Text style={styles.searchButtonText}>Cari</Text>
-          </TouchableOpacity>
+          {isAdminUser && (
+            <TouchableOpacity style={styles.searchButton} onPress={() => setSurveyorModalVisible(true)}>
+              <Text style={styles.searchButtonText}>Cari</Text>
+            </TouchableOpacity>
+          )}
         </View>
+        {!isAdminUser && (
+          <Text style={styles.surveyorLockedHint}>
+            Nama Surveyor otomatis mengikuti akun yang sedang login untuk menjaga akuntabilitas data.
+          </Text>
+        )}
 
         <Text style={styles.label}>Mode Survei</Text>
         <ChipGroup options={SURVEY_MODES} value={surveyMode} onChange={(value) => setSurveyMode(value as SurveyMode)} />
@@ -2097,6 +2122,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
     backgroundColor: '#fff',
+  },
+  inputDisabled: {
+    backgroundColor: '#f1f5f9',
+    color: '#64748b',
+  },
+  surveyorLockedHint: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: -2,
+    marginBottom: 8,
   },
   dropdownInput: {
     borderWidth: 1,

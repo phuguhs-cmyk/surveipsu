@@ -4,13 +4,13 @@
  * Dites terpisah dari alert.test.ts (yang menguji cabang web) karena
  * modul 'react-native' di-mock berbeda per file (Platform.OS berbeda).
  */
+import { Alert as RNAlert } from 'react-native';
+import { Alert } from '../alert';
+
 jest.mock('react-native', () => ({
   Platform: { OS: 'android' },
   Alert: { alert: jest.fn() },
 }));
-
-import { Alert as RNAlert } from 'react-native';
-import { Alert } from '../alert';
 
 describe('Alert.alert (native)', () => {
   it('mendelegasikan langsung ke RNAlert.alert dengan title, message, dan buttons', () => {

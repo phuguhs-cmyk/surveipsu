@@ -161,7 +161,7 @@ export async function addPackageAnnotation(
 }
 
 export function pickPreferredSegmentLocationLabel(
-  candidateLabels: Array<string | undefined>,
+  candidateLabels: (string | undefined)[],
   fallbackLabel?: string
 ): string | undefined {
   const normalized = candidateLabels
@@ -187,7 +187,7 @@ export function pickPreferredSegmentLocationLabel(
 }
 
 export function getLocationLabelChoices(
-  surveyLocations: Array<{ locationNote?: string }>,
+  surveyLocations: { locationNote?: string }[],
   fallbackLabel?: string
 ): string[] {
   const counts = new Map<string, number>();

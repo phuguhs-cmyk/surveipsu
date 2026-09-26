@@ -94,7 +94,10 @@ export default function CoordinatePickerModal({
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === 'picker_point') handlePoint(msg.lat, msg.lng);
-    } catch {}
+    } catch {
+      // Pesan dari WebView yang bukan JSON valid/tidak dikenal diabaikan
+      // dengan sengaja — bukan bug, hanya bukan pesan yang kita tunggu.
+    }
   };
 
   // Di web, iframe srcDoc mengirim pesan lewat window.postMessage biasa
@@ -105,7 +108,10 @@ export default function CoordinatePickerModal({
       try {
         const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (msg?.type === 'picker_point') handlePoint(msg.lat, msg.lng);
-      } catch {}
+      } catch {
+        // Sama seperti di atas: pesan window lain (bukan dari peta) yang
+        // tidak berformat JSON/skema yang diharapkan sengaja diabaikan.
+      }
     };
     window.addEventListener('message', listener);
     return () => window.removeEventListener('message', listener);

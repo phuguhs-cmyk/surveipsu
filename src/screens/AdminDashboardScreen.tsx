@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -16,7 +17,7 @@ import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
-import { deleteAllData, fetchSurveyList, listProposalsFromServer } from '../services/apiService';
+import { deleteAllData, fetchSurveyList, listProposalsFromServer , ExecutedOutputEntry } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
 import { clearQueue, getQueue } from '../services/queueService';
 import {
@@ -26,11 +27,16 @@ import {
   setPackageExecutedEverywhere,
   deletePackageEverywhere,
 } from '../services/packageService';
+
 import { clearAllAnnotations } from '../services/annotationService';
 import { AuthUser } from '../types';
 import { theme } from '../theme';
+import { INFRASTRUCTURE_TYPES } from '../config';
 import { getAvatarColor, getAvatarInitial } from '../utils/avatar';
 import { DashboardStatChips } from '../components/DashboardStatChips';
+import SearchableSelectModal from '../components/SearchableSelectModal';
+import { printPackageExecutionReport, printExecutionRecapReport } from '../services/reportService';
+
 
 type PackageStatusFilter = 'all' | 'draft' | 'in_progress' | 'posted';
 
@@ -60,6 +66,8 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   onToggleExecuted,
   onDeletePackage,
   deletingId,
+  onViewReport,
+  onOpenReportMenu,
 }: {
   item: PackageSummary;
   navigation: Props['navigation'];
@@ -69,6 +77,8 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
   onToggleExecuted?: (item: PackageSummary) => void;
   onDeletePackage?: (item: PackageSummary) => void;
   deletingId?: string | null;
+  onViewReport?: (item: PackageSummary) => void;
+  onOpenReportMenu?: (item: PackageSummary) => void;
 }) {
   const statusMeta = getStatusMeta(item.status);
   return (
@@ -91,7 +101,10 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
       </View>
       {item.executed && (
         <View style={styles.executedBadge}>
-          <Text style={styles.executedBadgeText}>✓ Sudah Dilaksanakan</Text>
+          <Text style={styles.executedBadgeText}>✓ Sudah Dilaksanakan{item.executedYear ? ` (${item.executedYear})` : ''}</Text>
+          {!!item.executedContractor && (
+            <Text style={styles.executedDetailText}>Penyedia Jasa: {item.executedContractor}</Text>
+          )}
         </View>
       )}
       {(item.kecamatan || item.desaKelurahan) && (
@@ -110,24 +123,28 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
             })
           }
         >
-          <Text style={styles.cardLink}>Detail Paket</Text>
+          <Text style={styles.cardActionButtonText}>Ubah Paket</Text>
         </TouchableOpacity>
-        {item.status !== 'posted' && (
-          <TouchableOpacity
-            style={styles.cardActionButton}
-            onPress={() =>
-              navigation.navigate('CreatePackage', {
-                surveyorName: userName || 'Admin',
-                editPackageId: item.packageId,
-                packageName: item.packageName,
-                kecamatan: item.kecamatan || '',
-                desaKelurahan: item.desaKelurahan || '',
-              })
-            }
-          >
-            <Text style={styles.cardLink}>Ubah Paket</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.cardActionButton}
+          onPress={() =>
+            navigation.navigate('Map', {
+              packageId: item.packageId,
+              packageName: item.packageName,
+              surveyorName: userName || 'Admin',
+            })
+          }
+        >
+          <Text style={styles.cardActionButtonText}>Peta Lokasi</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.cardActionRowSecondary}>
+        <TouchableOpacity
+          style={styles.cardActionButton}
+          onPress={() => (onOpenReportMenu ? onOpenReportMenu(item) : onViewReport && onViewReport(item))}
+        >
+          <Text style={styles.cardActionButtonText}>Laporan</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.cardActionButton}
           onPress={() =>
@@ -137,34 +154,38 @@ const PackageSummaryCard = memo(function PackageSummaryCard({
             })
           }
         >
-          <Text style={styles.cardLink}>Kelola Data (Edit/Hapus)</Text>
+          <Text style={styles.cardActionButtonText}>Kelola Data</Text>
         </TouchableOpacity>
-        {item.status !== 'posted' && onDeletePackage && (
-          <TouchableOpacity
-            style={styles.cardActionButton}
-            onPress={() => onDeletePackage(item)}
-            disabled={deletingId === item.packageId}
-          >
-            <Text style={[styles.cardLink, styles.cardDangerLink]}>
-              {deletingId === item.packageId ? 'Menghapus...' : 'Hapus Paket'}
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
-      {isAdmin && onToggleExecuted && (
-        <TouchableOpacity
-          style={[styles.toggleButton, item.executed && styles.toggleButtonActive]}
-          onPress={() => onToggleExecuted(item)}
-          disabled={togglingId === item.packageId}
-        >
-          <Text style={[styles.toggleButtonText, item.executed && styles.toggleButtonTextActive]}>
-            {togglingId === item.packageId
-              ? '...'
-              : item.executed
-              ? 'Batalkan Tanda Dilaksanakan'
-              : 'Tandai Sudah Dilaksanakan'}
-          </Text>
-        </TouchableOpacity>
+      {((item.status !== 'posted' && onDeletePackage) || (isAdmin && onToggleExecuted)) && (
+        <View style={styles.cardActionRowSecondary}>
+          {item.status !== 'posted' && onDeletePackage && (
+            <TouchableOpacity
+              style={[styles.cardActionButton, styles.cardActionButtonDanger]}
+              onPress={() => onDeletePackage(item)}
+              disabled={deletingId === item.packageId}
+            >
+              <Text style={[styles.cardActionButtonText, styles.cardActionButtonTextDanger]}>
+                {deletingId === item.packageId ? 'Menghapus...' : 'Hapus Paket'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {isAdmin && onToggleExecuted && (
+            <TouchableOpacity
+              style={[styles.cardActionButton, item.executed && styles.toggleButtonActive]}
+              onPress={() => onToggleExecuted(item)}
+              disabled={togglingId === item.packageId}
+            >
+              <Text style={[styles.cardActionButtonText, item.executed && styles.toggleButtonTextActive]}>
+                {togglingId === item.packageId
+                  ? '...'
+                  : item.executed
+                  ? 'Ubah Info Pelaksanaan'
+                  : 'Tandai Sudah Dilaksanakan'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )}
     </View>
   );
@@ -181,6 +202,9 @@ interface PackageSummary {
   surveyorName?: string;
   proposalCount?: number;
   executed?: boolean;
+  executedYear?: number;
+  executedContractor?: string;
+  executedOutput?: ExecutedOutputEntry[];
 }
 
 const DELETE_ALL_CONFIRM_PHRASE = 'HAPUS SEMUA DATA';
@@ -207,6 +231,19 @@ export default function AdminDashboardScreen({ navigation }: Props) {
   const [deletingAll, setDeletingAll] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [printingExecutionId, setPrintingExecutionId] = useState<string | null>(null);
+  const [printingRecap, setPrintingRecap] = useState(false);
+  const [reportMenuVisible, setReportMenuVisible] = useState(false);
+  const [reportMenuTarget, setReportMenuTarget] = useState<PackageSummary | null>(null);
+  const [executedModalVisible, setExecutedModalVisible] = useState(false);
+  const [executedTarget, setExecutedTarget] = useState<PackageSummary | null>(null);
+  const [executedYear, setExecutedYear] = useState('');
+  const [executedContractor, setExecutedContractor] = useState('');
+  const [executedOutputRows, setExecutedOutputRows] = useState<ExecutedOutputEntry[]>([]);
+  const [infraPickerVisible, setInfraPickerVisible] = useState(false);
+  const [infraPickerRowIndex, setInfraPickerRowIndex] = useState<number | null>(null);
+  const [savingExecuted, setSavingExecuted] = useState(false);
+
 
   const loadInFlightRef = useRef(false);
 
@@ -294,13 +331,23 @@ export default function AdminDashboardScreen({ navigation }: Props) {
       // Lengkapi jumlah proposal terunggah dan status "Sudah Dilaksanakan"
       // (disimpan di cache paket lokal, bukan di baris data survei).
       const executedByPackage = new Map<string, boolean>();
+      const executedYearByPackage = new Map<string, number | undefined>();
+      const executedContractorByPackage = new Map<string, string | undefined>();
+      const executedOutputByPackage = new Map<string, ExecutedOutputEntry[] | undefined>();
       localPackages.forEach((pkg) => {
         executedByPackage.set(pkg.id, !!pkg.executed);
+        executedYearByPackage.set(pkg.id, pkg.executedYear);
+        executedContractorByPackage.set(pkg.id, pkg.executedContractor);
+        executedOutputByPackage.set(pkg.id, pkg.executedOutput);
       });
       map.forEach((pkg, packageId) => {
         pkg.proposalCount = proposalCountByPackage.get(packageId) || 0;
         pkg.executed = executedByPackage.get(packageId) || false;
+        pkg.executedYear = executedYearByPackage.get(packageId);
+        pkg.executedContractor = executedContractorByPackage.get(packageId);
+        pkg.executedOutput = executedOutputByPackage.get(packageId);
       });
+
 
       const result = Array.from(map.values())
         .map((pkg) => ({
@@ -328,37 +375,183 @@ export default function AdminDashboardScreen({ navigation }: Props) {
     loadData(true);
   }, [loadData]);
 
-  const handleToggleExecuted = useCallback(
-    (item: PackageSummary) => {
-      const nextExecuted = !item.executed;
-      Alert.alert(
-        nextExecuted ? 'Tandai Sudah Dilaksanakan' : 'Batalkan Tanda Dilaksanakan',
-        nextExecuted
-          ? `Tandai paket "${item.packageName}" sebagai sudah dilaksanakan di lapangan?`
-          : `Batalkan tanda "Sudah Dilaksanakan" untuk paket "${item.packageName}"?`,
-        [
-          { text: 'Batal', style: 'cancel' },
-          {
-            text: 'Ya',
-            onPress: async () => {
-              setTogglingId(item.packageId);
-              try {
-                await setPackageExecutedEverywhere(item.packageId, nextExecuted, user?.username);
-                setPackages((prev) =>
-                  prev.map((p) => (p.packageId === item.packageId ? { ...p, executed: nextExecuted } : p))
-                );
-              } catch (err: any) {
-                Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat mengubah status pelaksanaan.');
-              } finally {
-                setTogglingId(null);
-              }
-            },
+  const openExecutedModal = useCallback((item: PackageSummary) => {
+    setExecutedTarget(item);
+    setExecutedYear(item.executed && item.executedYear ? String(item.executedYear) : String(new Date().getFullYear()));
+    setExecutedContractor(item.executed ? item.executedContractor || '' : '');
+    setExecutedOutputRows(
+      item.executed && item.executedOutput && item.executedOutput.length > 0
+        ? item.executedOutput.map((row) => ({ ...row }))
+        : [{ infraType: INFRASTRUCTURE_TYPES[0] || '', panjang: '', tinggi: '', catatan: '' }]
+    );
+    setExecutedModalVisible(true);
+  }, []);
+
+  const closeExecutedModal = () => {
+    if (savingExecuted) return;
+    setExecutedModalVisible(false);
+    setExecutedTarget(null);
+  };
+
+  const handleCancelExecuted = () => {
+    if (!executedTarget) return;
+    const item = executedTarget;
+    Alert.alert(
+      'Batalkan Tanda Dilaksanakan',
+      `Batalkan tanda "Sudah Dilaksanakan" untuk paket "${item.packageName}"? Info pelaksanaan yang sudah diisi akan ikut terhapus.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Ya, Batalkan',
+          style: 'destructive',
+          onPress: async () => {
+            setSavingExecuted(true);
+            try {
+              await setPackageExecutedEverywhere(item.packageId, false, user?.username);
+              setPackages((prev) =>
+                prev.map((p) =>
+                  p.packageId === item.packageId
+                    ? { ...p, executed: false, executedYear: undefined, executedContractor: undefined, executedOutput: undefined }
+                    : p
+                )
+              );
+              setExecutedModalVisible(false);
+              setExecutedTarget(null);
+            } catch (err: any) {
+              Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat mengubah status pelaksanaan.');
+            } finally {
+              setSavingExecuted(false);
+            }
           },
-        ]
+        },
+      ]
+    );
+  };
+
+  const addExecutedOutputRow = () => {
+    setExecutedOutputRows((prev) => [...prev, { infraType: INFRASTRUCTURE_TYPES[0] || '', panjang: '', tinggi: '', catatan: '' }]);
+  };
+
+  const removeExecutedOutputRow = (index: number) => {
+    setExecutedOutputRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateExecutedOutputRow = (index: number, fields: Partial<ExecutedOutputEntry>) => {
+    setExecutedOutputRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...fields } : row)));
+  };
+
+  const openInfraPickerForRow = (index: number) => {
+    setInfraPickerRowIndex(index);
+    setInfraPickerVisible(true);
+  };
+
+  const handleSelectInfraForRow = (value: string) => {
+    if (infraPickerRowIndex !== null) {
+      updateExecutedOutputRow(infraPickerRowIndex, { infraType: value });
+    }
+    setInfraPickerVisible(false);
+    setInfraPickerRowIndex(null);
+  };
+
+  const confirmExecutedInfo = async () => {
+    if (!executedTarget) return;
+    const yearNum = parseInt(executedYear.trim(), 10);
+    if (!executedYear.trim() || !Number.isFinite(yearNum) || yearNum < 2000 || yearNum > 2100) {
+      Alert.alert('Data Belum Lengkap', 'Isi Tahun Pelaksanaan dengan tahun yang valid (mis. 2025).');
+      return;
+    }
+    if (!executedContractor.trim()) {
+      Alert.alert('Data Belum Lengkap', 'Isi Nama Penyedia Jasa/Kontraktor.');
+      return;
+    }
+    const cleanedRows = executedOutputRows
+      .filter((row) => row.infraType && (row.panjang?.trim() || row.tinggi?.trim() || row.catatan?.trim()))
+      .map((row) => ({
+        infraType: row.infraType,
+        panjang: row.panjang?.trim() || undefined,
+        tinggi: row.tinggi?.trim() || undefined,
+        catatan: row.catatan?.trim() || undefined,
+      }));
+
+    setSavingExecuted(true);
+    try {
+      await setPackageExecutedEverywhere(executedTarget.packageId, true, user?.username, {
+        executedYear: yearNum,
+        executedContractor: executedContractor.trim(),
+        executedOutput: cleanedRows,
+      });
+      setPackages((prev) =>
+        prev.map((p) =>
+          p.packageId === executedTarget.packageId
+            ? { ...p, executed: true, executedYear: yearNum, executedContractor: executedContractor.trim(), executedOutput: cleanedRows }
+            : p
+        )
       );
+      setExecutedModalVisible(false);
+      setExecutedTarget(null);
+    } catch (err: any) {
+      Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat menyimpan info pelaksanaan.');
+    } finally {
+      setSavingExecuted(false);
+    }
+  };
+
+  const handleViewReport = useCallback(
+    (item: PackageSummary) => {
+      const pkgRows = allRows.filter((row) => row['ID Paket'] === item.packageId);
+      if (pkgRows.length === 0) {
+        Alert.alert('Tidak Ada Data', 'Belum ada data survei untuk ditampilkan di paket ini.');
+        return;
+      }
+      navigation.navigate('PackageReport', { packageId: item.packageId, packageName: item.packageName, rows: pkgRows });
     },
-    [user?.username]
+    [allRows, navigation]
   );
+
+  const handlePrintExecutionReport = useCallback(
+    async (item: PackageSummary) => {
+      setPrintingExecutionId(item.packageId);
+      try {
+        await printPackageExecutionReport(item);
+      } catch (err: any) {
+        Alert.alert('Gagal Cetak', err?.message || 'Terjadi kesalahan saat membuat PDF.');
+      } finally {
+        setPrintingExecutionId(null);
+      }
+    },
+    []
+  );
+
+  const handlePrintExecutionRecap = useCallback(async () => {
+    setPrintingRecap(true);
+    try {
+      await printExecutionRecapReport(packages);
+    } catch (err: any) {
+      Alert.alert('Gagal Cetak', err?.message || 'Terjadi kesalahan saat membuat PDF.');
+    } finally {
+      setPrintingRecap(false);
+    }
+  }, [packages]);
+
+  const openReportMenu = useCallback((item: PackageSummary) => {
+    setReportMenuTarget(item);
+    setReportMenuVisible(true);
+  }, []);
+
+  const closeReportMenu = useCallback(() => {
+    setReportMenuVisible(false);
+    setReportMenuTarget(null);
+  }, []);
+
+  const handleSelectTableReport = useCallback(() => {
+    if (reportMenuTarget) handleViewReport(reportMenuTarget);
+    closeReportMenu();
+  }, [reportMenuTarget, handleViewReport, closeReportMenu]);
+
+  const handleSelectExecutionReport = useCallback(() => {
+    if (reportMenuTarget) handlePrintExecutionReport(reportMenuTarget);
+    closeReportMenu();
+  }, [reportMenuTarget, handlePrintExecutionReport, closeReportMenu]);
 
   const handleDeletePackage = useCallback(
     (item: PackageSummary) => {
@@ -571,6 +764,18 @@ export default function AdminDashboardScreen({ navigation }: Props) {
         <Text style={styles.allReportBtnText}>Laporan Semua Paket (PDF)</Text>
       </TouchableOpacity>
 
+      {user?.role === 'admin' && (
+        <TouchableOpacity
+          style={[styles.allReportBtn, (loading || packages.length === 0 || printingRecap) && styles.buttonDisabled]}
+          disabled={loading || packages.length === 0 || printingRecap}
+          onPress={handlePrintExecutionRecap}
+        >
+          <Text style={styles.allReportBtnText}>
+            {printingRecap ? 'Membuat PDF...' : 'Rekap Pelaksanaan Fisik (PDF)'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       <Text style={styles.sectionLabel}>Daftar Paket Pekerjaan</Text>
 
       <TextInput
@@ -624,9 +829,11 @@ export default function AdminDashboardScreen({ navigation }: Props) {
               userName={user?.name}
               isAdmin={user?.role === 'admin'}
               togglingId={togglingId}
-              onToggleExecuted={handleToggleExecuted}
+              onToggleExecuted={openExecutedModal}
               onDeletePackage={handleDeletePackage}
               deletingId={deletingId}
+              onViewReport={handleViewReport}
+              onOpenReportMenu={openReportMenu}
             />
           )}
         />
@@ -689,14 +896,179 @@ export default function AdminDashboardScreen({ navigation }: Props) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <Modal
+        visible={executedModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={closeExecutedModal}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={[styles.modalCard, styles.executedModalCard]}>
+            <Text style={styles.modalTitle}>Info Pelaksanaan</Text>
+            <Text style={styles.modalMessage}>
+              Paket "{executedTarget?.packageName}". Isi informasi pelaksanaan fisik di lapangan.
+            </Text>
+            <ScrollView style={styles.executedFormScroll} keyboardShouldPersistTaps="handled">
+              <Text style={styles.formLabel}>Tahun Pelaksanaan</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={executedYear}
+                onChangeText={setExecutedYear}
+                placeholder="mis. 2025"
+                keyboardType="number-pad"
+                maxLength={4}
+                editable={!savingExecuted}
+              />
+              <Text style={styles.formLabel}>Penyedia Jasa / Kontraktor</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={executedContractor}
+                onChangeText={setExecutedContractor}
+                placeholder="Nama perusahaan pelaksana"
+                editable={!savingExecuted}
+              />
+
+              <Text style={styles.formLabel}>Rincian Output per Jenis Infrastruktur</Text>
+              {executedOutputRows.map((row, index) => (
+                <View key={index} style={styles.outputRowCard}>
+                  <View style={styles.outputRowHeader}>
+                    <TouchableOpacity
+                      style={styles.outputTypeSelector}
+                      onPress={() => openInfraPickerForRow(index)}
+                      disabled={savingExecuted}
+                    >
+                      <Text style={styles.outputTypeSelectorText}>{row.infraType || 'Pilih jenis...'}</Text>
+                    </TouchableOpacity>
+                    {executedOutputRows.length > 1 && (
+                      <TouchableOpacity
+                        style={styles.outputRemoveBtn}
+                        onPress={() => removeExecutedOutputRow(index)}
+                        disabled={savingExecuted}
+                      >
+                        <Text style={styles.outputRemoveBtnText}>✕</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.outputDimensionRow}>
+                    <TextInput
+                      style={[styles.modalInput, styles.outputDimensionInput]}
+                      value={row.panjang}
+                      onChangeText={(v) => updateExecutedOutputRow(index, { panjang: v })}
+                      placeholder="Panjang (m)"
+                      keyboardType="decimal-pad"
+                      editable={!savingExecuted}
+                    />
+                    <TextInput
+                      style={[styles.modalInput, styles.outputDimensionInput]}
+                      value={row.tinggi}
+                      onChangeText={(v) => updateExecutedOutputRow(index, { tinggi: v })}
+                      placeholder="Tinggi/Lebar (m)"
+                      keyboardType="decimal-pad"
+                      editable={!savingExecuted}
+                    />
+                  </View>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={row.catatan}
+                    onChangeText={(v) => updateExecutedOutputRow(index, { catatan: v })}
+                    placeholder="Catatan (opsional)"
+                    editable={!savingExecuted}
+                  />
+                </View>
+              ))}
+              <TouchableOpacity style={styles.addOutputRowBtn} onPress={addExecutedOutputRow} disabled={savingExecuted}>
+                <Text style={styles.addOutputRowBtnText}>+ Tambah Jenis Infrastruktur</Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {!!executedTarget?.executed && (
+              <TouchableOpacity style={styles.cancelExecutedLink} onPress={handleCancelExecuted} disabled={savingExecuted}>
+                <Text style={styles.cancelExecutedLinkText}>Batalkan Tanda Sudah Dilaksanakan</Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.modalActionRow}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={closeExecutedModal}
+                disabled={savingExecuted}
+              >
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalConfirmButton, savingExecuted && styles.buttonDisabled]}
+                onPress={confirmExecutedInfo}
+                disabled={savingExecuted}
+              >
+                {savingExecuted ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Simpan</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={reportMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeReportMenu}
+      >
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeReportMenu}>
+          <TouchableOpacity activeOpacity={1} style={styles.reportMenuCard} onPress={() => {}}>
+            <Text style={styles.reportMenuTitle}>Pilih Laporan</Text>
+            {!!reportMenuTarget?.packageName && (
+              <Text style={styles.reportMenuSubtitle}>{reportMenuTarget.packageName}</Text>
+            )}
+            <TouchableOpacity style={styles.reportMenuOption} onPress={handleSelectTableReport}>
+              <Text style={styles.reportMenuOptionText}>Laporan Tabel</Text>
+            </TouchableOpacity>
+            {user?.role === 'admin' && (
+              <TouchableOpacity
+                style={styles.reportMenuOption}
+                onPress={handleSelectExecutionReport}
+                disabled={printingExecutionId === reportMenuTarget?.packageId}
+              >
+                <Text style={styles.reportMenuOptionText}>
+                  {printingExecutionId === reportMenuTarget?.packageId
+                    ? 'Membuat PDF...'
+                    : 'Laporan Pelaksanaan (PDF)'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.reportMenuCancel} onPress={closeReportMenu}>
+              <Text style={styles.reportMenuCancelText}>Batal</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <SearchableSelectModal
+        visible={infraPickerVisible}
+        title="Pilih Jenis Infrastruktur"
+        options={INFRASTRUCTURE_TYPES}
+        onSelect={handleSelectInfraForRow}
+        onClose={() => {
+          setInfraPickerVisible(false);
+          setInfraPickerRowIndex(null);
+        }}
+      />
     </View>
   );
 }
 
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background, padding: theme.spacing.lg },
   header: {
-    marginBottom: 16,
+    marginBottom: 10,
   },
   headerTitle: {
     flexShrink: 1,
@@ -705,15 +1077,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 12,
+    gap: 6,
+    marginTop: 8,
   },
   headerAction: {
     borderWidth: 1,
     borderColor: theme.colors.primaryBorder,
     borderRadius: theme.radius.sm,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     backgroundColor: theme.colors.primarySoftBg,
   },
   logoutAction: {
@@ -780,9 +1152,9 @@ const styles = StyleSheet.create({
   allReportBtn: {
     backgroundColor: theme.colors.textPrimary,
     borderRadius: theme.radius.sm,
-    paddingVertical: 8,
+    paddingVertical: 6,
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   allReportBtnText: { color: '#fff', fontWeight: theme.font.semiBold, fontSize: 13 },
   deleteAllButton: {
@@ -881,6 +1253,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   executedBadgeText: { color: theme.colors.success, fontSize: 11, fontWeight: theme.font.semiBold },
+  executedDetailText: { color: theme.colors.success, fontSize: 11, marginTop: 2 },
   toggleButton: {
     marginTop: 10,
     borderWidth: 1,
@@ -895,17 +1268,80 @@ const styles = StyleSheet.create({
   toggleButtonText: { color: theme.colors.primary, fontSize: 12, fontWeight: theme.font.medium },
   toggleButtonTextActive: { color: theme.colors.danger },
   cardLocation: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
-  cardLink: { fontSize: 12, color: theme.colors.primary, marginTop: 6, fontWeight: theme.font.medium },
-  cardDangerLink: { color: theme.colors.danger },
 
   cardActionRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
+    gap: 8,
+    marginTop: 10,
+  },
+  cardActionRowSecondary: {
+    flexDirection: 'row',
+    gap: 8,
     marginTop: 8,
   },
   cardActionButton: {
-    paddingVertical: 4,
+    flex: 1,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    alignItems: 'center',
+  },
+  cardActionButtonDanger: {
+    borderColor: theme.colors.danger,
+  },
+  cardActionButtonText: {
+    color: theme.colors.primary,
+    fontSize: 12,
+    fontWeight: theme.font.medium,
+    textAlign: 'center',
+  },
+  cardActionButtonTextDanger: {
+    color: theme.colors.danger,
+  },
+  reportMenuCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    padding: 16,
+  },
+  reportMenuTitle: {
+    fontSize: 16,
+    fontWeight: theme.font.semiBold,
+    color: theme.colors.textPrimary,
+    marginBottom: 2,
+  },
+  reportMenuSubtitle: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginBottom: 12,
+  },
+  reportMenuOption: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  reportMenuOptionText: {
+    fontSize: 14,
+    fontWeight: theme.font.medium,
+    color: theme.colors.primary,
+    textAlign: 'center',
+  },
+  reportMenuCancel: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  reportMenuCancelText: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    fontWeight: theme.font.medium,
   },
   modalBackdrop: {
     flex: 1,
@@ -980,4 +1416,89 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: theme.font.semiBold,
   },
+  executedModalCard: {
+    maxHeight: '88%',
+  },
+  executedFormScroll: {
+    maxHeight: 420,
+  },
+  formLabel: {
+    fontSize: 13,
+    fontWeight: theme.font.medium,
+    color: theme.colors.textPrimary,
+    marginBottom: 6,
+    marginTop: 4,
+  },
+  outputRowCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
+    padding: 10,
+    marginBottom: 10,
+    backgroundColor: theme.colors.background,
+  },
+  outputRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  outputTypeSelector: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: theme.colors.surface,
+  },
+  outputTypeSelectorText: {
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+  },
+  outputRemoveBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: theme.radius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  outputRemoveBtnText: {
+    color: theme.colors.danger,
+    fontWeight: theme.font.semiBold,
+  },
+  outputDimensionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  outputDimensionInput: {
+    flex: 1,
+  },
+  addOutputRowBtn: {
+    borderWidth: 1,
+    borderColor: theme.colors.primaryBorder,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: theme.colors.primarySoftBg,
+    marginBottom: 8,
+  },
+  addOutputRowBtnText: {
+    color: theme.colors.primary,
+    fontWeight: theme.font.medium,
+    fontSize: 13,
+  },
+  cancelExecutedLink: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  cancelExecutedLinkText: {
+    color: theme.colors.danger,
+    fontSize: 12,
+    fontWeight: theme.font.medium,
+  },
 });
+

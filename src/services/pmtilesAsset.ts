@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 // ~32MB, dianggap dapat diterima demi ketersediaan offline penuh). Metro
 // memperlakukan file ini sebagai aset biner berkat `assetExts` di
 // `metro.config.js`.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 const PMTILES_MODULE = require('../../assets/map-data/banjarnegara.pmtiles');
 
 const PMTILES_FILE_NAME = 'banjarnegara.pmtiles';

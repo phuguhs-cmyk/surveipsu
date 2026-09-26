@@ -51,7 +51,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 14,
+    marginBottom: 10,
   },
   chip: {
     flexGrow: 1,
@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 12,
     alignItems: 'center',
   },

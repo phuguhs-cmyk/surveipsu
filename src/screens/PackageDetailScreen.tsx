@@ -1,15 +1,20 @@
-import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Linking } from 'react-native';
 import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
-import { fetchSurveyList, listInfraTypes, uploadProposalToServer, deleteProposalFromServer, listProposalsFromServer } from '../services/apiService';
+import { fetchSurveyList, listInfraTypes, uploadProposalToServer, deleteProposalFromServer, listProposalsFromServer, postPackage, unpostPackage } from '../services/apiService';
 import { pickProposalDocument } from '../services/documentService';
 import { INFRASTRUCTURE_TYPES } from '../config';
-import { getPackageById, updatePackageAllowedTypes } from '../services/packageService';
+import { getPackageById, updatePackageAllowedTypes, renamePackageEverywhere } from '../services/packageService';
 import { getCurrentUser } from '../services/authService';
-import { ProposalDocument } from '../types';
+import { getCurrentLocation } from '../services/locationService';
+import { parseCoordinate } from '../services/commonUtils';
+import { getDesaByKecamatan, getKecamatanNames, getWilayahList } from '../services/wilayahService';
+import SearchableSelectModal from '../components/SearchableSelectModal';
+import CoordinatePickerModal from '../components/CoordinatePickerModal';
+import { ProposalDocument, WilayahItem } from '../types';
 import { theme } from '../theme';
 
 
@@ -20,6 +25,11 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
   const { packageId, packageName, surveyorName } = route.params;
   const [loading, setLoading] = useState(true);
   const [isPackagePosted, setIsPackagePosted] = useState(false);
+  const [packageRows, setPackageRows] = useState<any[]>([]);
+  const [canPost, setCanPost] = useState(true);
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [currentUsername, setCurrentUsername] = useState<string | undefined>(undefined);
+  const [posting, setPosting] = useState(false);
   // Selalu mulai dengan daftar jenis bawaan sebagai fallback, supaya layar
   // ini tidak pernah tampil kosong meskipun listInfraTypes() ke server gagal
   // (mis. backend belum di-deploy ulang, sesi kedaluwarsa, atau offline).
@@ -34,7 +44,51 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
   const [editingTypes, setEditingTypes] = useState(false);
   const [draftTypes, setDraftTypes] = useState<string[]>([]);
   const [savingTypes, setSavingTypes] = useState(false);
+
+  // Ubah Info Paket (nama, wilayah, koordinat) - digabung ke layar Detail
+  // Paket ini (sebelumnya terpisah di CreatePackageScreen mode edit) supaya
+  // pengguna tidak perlu berpindah layar hanya untuk mengubah info dasar paket.
+  const [currentPackageName, setCurrentPackageName] = useState(packageName);
+  const [editingInfo, setEditingInfo] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftKecamatan, setDraftKecamatan] = useState('');
+  const [draftDesaKelurahan, setDraftDesaKelurahan] = useState('');
+  const [draftLatitude, setDraftLatitude] = useState('');
+  const [draftLongitude, setDraftLongitude] = useState('');
+  const [wilayahList, setWilayahList] = useState<WilayahItem[]>([]);
+  const [kecamatanModalVisible, setKecamatanModalVisible] = useState(false);
+  const [desaModalVisible, setDesaModalVisible] = useState(false);
+  const [mapPickerVisible, setMapPickerVisible] = useState(false);
+  const [savingInfo, setSavingInfo] = useState(false);
+
+  const kecamatanOptions = useMemo(() => getKecamatanNames(wilayahList), [wilayahList]);
+  const desaOptions = useMemo(
+    () => getDesaByKecamatan(wilayahList, draftKecamatan).map((item) => item.desa),
+    [wilayahList, draftKecamatan]
+  );
+
+  // Ringkasan "Dikerjakan oleh" per surveyor, dihitung dari data item yang
+  // sudah ada di paket ini (packageRows), tanpa perlu field baru di level
+  // paket. Ini menjaga akuntabilitas tetap terlihat meski beberapa
+  // surveyor mengerjakan paket yang sama.
+  const surveyorSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    packageRows.forEach((row) => {
+      const name = (row['Nama Surveyor'] || '').toString().trim();
+      if (!name) return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [packageRows]);
+
   const loadInFlightRef = useRef(false);
+  const loadedPackageInfoRef = useRef<{
+    name: string;
+    kecamatan: string;
+    desaKelurahan: string;
+    latitude?: number;
+    longitude?: number;
+  }>({ name: packageName, kecamatan: '', desaKelurahan: '' });
 
   // ─── Proposal Pekerjaan (RAB/dokumen) ──────────────────────────────────
   const [proposals, setProposals] = useState<ProposalDocument[]>([]);
@@ -68,6 +122,16 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
     try {
       const pkg = await getPackageById(packageId);
       setAllowedTypes(pkg?.allowedInfraTypes && pkg.allowedInfraTypes.length > 0 ? pkg.allowedInfraTypes : null);
+      if (pkg) {
+        setCurrentPackageName(pkg.name || packageName);
+        loadedPackageInfoRef.current = {
+          name: pkg.name || packageName,
+          kecamatan: pkg.kecamatan || '',
+          desaKelurahan: pkg.desaKelurahan || '',
+          latitude: pkg.latitude,
+          longitude: pkg.longitude,
+        };
+      }
     } catch {
       setAllowedTypes(null);
     }
@@ -78,6 +142,7 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
     // posting gagal diperiksa, atau sebaliknya).
     try {
       const allRows = await fetchSurveyList(undefined, packageId);
+      setPackageRows(allRows);
       setIsPackagePosted(allRows.length > 0 && allRows.every((row) => row['Status'] === 'Diposting'));
     } catch (err: any) {
       // Jika gagal memeriksa status, biarkan tetap bisa menambah data (fail-open)
@@ -110,12 +175,17 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
     useCallback(() => {
       loadStatus();
       loadProposals();
+      getWilayahList().then(setWilayahList).catch(() => {});
       getCurrentUser().then((user) => {
         const canEdit = user?.role === 'admin' || !!user?.permissions?.canEdit;
         setCanManageProposals(canEdit);
+        setIsAdminUser(user?.role === 'admin');
+        setCanPost(user?.role === 'admin' || user?.permissions?.canPost !== false);
+        setCurrentUsername(user?.username);
       });
     }, [loadStatus, loadProposals])
   );
+
 
   const handleAddItem = (type: string) => {
     if (isPackagePosted) {
@@ -131,6 +201,56 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
       surveyorName,
       infrastructureType: type,
     });
+  };
+
+  const handlePostPackage = () => {
+    Alert.alert(
+      'Posting Paket Pekerjaan',
+      `Semua data survei (${packageRows.length} item) di paket "${currentPackageName}" akan ditandai "Survei Selesai" (dikunci) sekaligus. Setelah itu, data tidak dapat diubah/dihapus lagi kecuali oleh admin. Lanjutkan?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Posting',
+          onPress: async () => {
+            setPosting(true);
+            try {
+              await postPackage(packageId, currentUsername);
+              setPackageRows((prev) => prev.map((row) => ({ ...row, Status: 'Diposting' })));
+              setIsPackagePosted(true);
+            } catch (err: any) {
+              Alert.alert('Gagal Posting', err?.message || 'Terjadi kesalahan saat memposting paket.');
+            } finally {
+              setPosting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleUnpostPackage = () => {
+    Alert.alert(
+      'Batalkan Status Survei Selesai',
+      `Yakin ingin membuka kunci seluruh data di paket "${currentPackageName}" (batal "Survei Selesai") agar bisa diedit kembali?`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Batalkan Posting',
+          onPress: async () => {
+            setPosting(true);
+            try {
+              await unpostPackage(packageId, currentUsername);
+              setPackageRows((prev) => prev.map((row) => ({ ...row, Status: 'Belum Diposting' })));
+              setIsPackagePosted(false);
+            } catch (err: any) {
+              Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat membatalkan posting paket.');
+            } finally {
+              setPosting(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Hanya tampilkan jenis pekerjaan yang dipilih surveyor saat membuat
@@ -179,8 +299,61 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
       setSavingTypes(false);
     }
   };
+  const startEditInfo = () => {
+    const info = loadedPackageInfoRef.current;
+    setDraftName(currentPackageName);
+    setDraftKecamatan(info.kecamatan);
+    setDraftDesaKelurahan(info.desaKelurahan);
+    setDraftLatitude(info.latitude != null ? String(info.latitude) : '');
+    setDraftLongitude(info.longitude != null ? String(info.longitude) : '');
+    setEditingInfo(true);
+  };
+
+  const cancelEditInfo = () => {
+    setEditingInfo(false);
+  };
+
+  const handleUseCurrentLocationForInfo = async () => {
+    try {
+      const location = await getCurrentLocation();
+      setDraftLatitude(String(location.latitude));
+      setDraftLongitude(String(location.longitude));
+    } catch (error: any) {
+      Alert.alert('Lokasi Saat Ini Tidak Tersedia', error?.message || 'Tidak dapat mengambil koordinat GPS saat ini.');
+    }
+  };
+
+  const handleSaveInfo = async () => {
+    const trimmedName = draftName.trim();
+    if (!trimmedName) {
+      Alert.alert('Nama Paket Wajib Diisi', 'Masukkan nama paket pekerjaan terlebih dahulu.');
+      return;
+    }
+    setSavingInfo(true);
+    try {
+      const lat = draftLatitude.trim() ? parseCoordinate(draftLatitude) : undefined;
+      const lng = draftLongitude.trim() ? parseCoordinate(draftLongitude) : undefined;
+      await renamePackageEverywhere(packageId, trimmedName, undefined, draftKecamatan, draftDesaKelurahan, lat, lng);
+      setCurrentPackageName(trimmedName);
+      loadedPackageInfoRef.current = {
+        name: trimmedName,
+        kecamatan: draftKecamatan,
+        desaKelurahan: draftDesaKelurahan,
+        latitude: lat,
+        longitude: lng,
+      };
+      setEditingInfo(false);
+    } catch (err: any) {
+      Alert.alert('Gagal Mengubah Paket', err?.message || 'Terjadi kesalahan saat menyimpan perubahan paket.');
+    } finally {
+      setSavingInfo(false);
+    }
+  };
+
+
 
   const handleUploadProposal = async () => {
+
     try {
       const doc = await pickProposalDocument();
       if (!doc) return;
@@ -238,7 +411,7 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-      <Text style={styles.title}>{packageName}</Text>
+      <Text style={styles.title}>{currentPackageName}</Text>
       <Text style={styles.subtitle}>
         {allowedTypes
           ? 'Jenis pekerjaan berikut dipilih saat paket ini dibuat. Tambahkan data survei untuk jenis yang sesuai.'
@@ -264,15 +437,98 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
         )
       )}
 
-      <View style={styles.mapBox}>
-        <Text style={styles.mapTitle}>Peta Lokasi Paket</Text>
-        <TouchableOpacity
-          style={styles.mapOpenButton}
-          onPress={() => navigation.navigate('Map', { packageId, packageName, surveyorName })}
-        >
-          <Text style={styles.mapOpenButtonText}>🗺️ Lihat Peta & Anotasi</Text>
-        </TouchableOpacity>
-      </View>
+      {!isPackagePosted && (
+        editingInfo ? (
+          <View style={styles.editInfoBox}>
+            <Text style={styles.editTypesTitle}>Ubah Info Paket</Text>
+            <Text style={styles.editInfoLabel}>Nama Paket</Text>
+            <TextInput
+              style={styles.editInfoInput}
+              value={draftName}
+              onChangeText={setDraftName}
+              placeholder="Nama paket pekerjaan"
+            />
+            <Text style={styles.editInfoLabel}>Kecamatan & Desa/Kelurahan</Text>
+            <View style={styles.editInfoRow}>
+              <TouchableOpacity style={styles.editInfoDropdown} onPress={() => setKecamatanModalVisible(true)}>
+                <Text style={draftKecamatan ? styles.dropdownValueText : styles.dropdownPlaceholderText}>
+                  {draftKecamatan || 'Pilih Kecamatan'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editInfoDropdown, !draftKecamatan && styles.typeButtonDisabled]}
+                disabled={!draftKecamatan}
+                onPress={() => draftKecamatan && setDesaModalVisible(true)}
+              >
+                <Text style={draftDesaKelurahan ? styles.dropdownValueText : styles.dropdownPlaceholderText}>
+                  {draftDesaKelurahan || (draftKecamatan ? 'Pilih Desa/Kelurahan' : 'Pilih Kecamatan dulu')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.editInfoLabel}>Koordinat Utama Paket (Opsional)</Text>
+            <View style={styles.editInfoRow}>
+              <TextInput
+                style={[styles.editInfoInput, { flex: 1 }]}
+                placeholder="Latitude"
+                value={draftLatitude}
+                onChangeText={setDraftLatitude}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={[styles.editInfoInput, { flex: 1 }]}
+                placeholder="Longitude"
+                value={draftLongitude}
+                onChangeText={setDraftLongitude}
+                keyboardType="numeric"
+              />
+            </View>
+            <TouchableOpacity style={styles.gpsButton} onPress={handleUseCurrentLocationForInfo}>
+              <Text style={styles.gpsButtonText}>Ambil GPS Saat Ini</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.gpsButton} onPress={() => setMapPickerVisible(true)}>
+              <Text style={styles.gpsButtonText}>Pilih di Peta</Text>
+            </TouchableOpacity>
+            <View style={styles.editTypesActionRow}>
+              <TouchableOpacity
+                style={[styles.saveTypesButton, savingInfo && styles.typeButtonDisabled]}
+                onPress={handleSaveInfo}
+                disabled={savingInfo}
+              >
+                <Text style={styles.saveTypesButtonText}>{savingInfo ? 'Menyimpan...' : 'Simpan'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelTypesButton} onPress={cancelEditInfo} disabled={savingInfo}>
+                <Text style={styles.cancelTypesButtonText}>Batal</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.editTypesLink} onPress={startEditInfo}>
+            <Text style={styles.editTypesLinkText}>Ubah Paket (Nama, Wilayah, Koordinat)</Text>
+          </TouchableOpacity>
+        )
+      )}
+
+      {isPackagePosted ? (
+        isAdminUser && (
+          <TouchableOpacity
+            style={[styles.unpostButton, posting && styles.typeButtonDisabled]}
+            disabled={posting}
+            onPress={handleUnpostPackage}
+          >
+            <Text style={styles.unpostButtonText}>Batalkan Posting Paket</Text>
+          </TouchableOpacity>
+        )
+      ) : (
+        canPost && (
+          <TouchableOpacity
+            style={[styles.postButton, (posting || packageRows.length === 0) && styles.typeButtonDisabled]}
+            disabled={posting || packageRows.length === 0}
+            onPress={handlePostPackage}
+          >
+            <Text style={styles.postButtonText}>Posting Paket Pekerjaan</Text>
+          </TouchableOpacity>
+        )
+      )}
 
       <Text style={styles.sectionLabel}>Proposal Pekerjaan</Text>
       <View style={styles.proposalBox}>
@@ -315,6 +571,18 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         )}
       </View>
+
+      {surveyorSummary.length > 0 && (
+        <View style={styles.summaryBox}>
+          <Text style={styles.sectionLabel}>Dikerjakan oleh</Text>
+          {surveyorSummary.map(([name, count]) => (
+            <View key={name} style={styles.summaryRow}>
+              <Text style={styles.summaryName} numberOfLines={1}>{name}</Text>
+              <Text style={styles.summaryCount}>{count} item</Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       <Text style={styles.sectionLabel}>Jenis Infrastruktur</Text>
       <View style={styles.grid}>
@@ -376,6 +644,41 @@ export default function PackageDetailScreen({ route, navigation }: Props) {
       <TouchableOpacity style={styles.queueButton} onPress={() => navigation.navigate('Queue')}>
         <Text style={styles.queueButtonText}>Lihat Antrian Pengiriman</Text>
       </TouchableOpacity>
+
+      <SearchableSelectModal
+        visible={kecamatanModalVisible}
+        title="Pilih Kecamatan"
+        options={kecamatanOptions}
+        onSelect={(value) => {
+          setDraftKecamatan(value);
+          setDraftDesaKelurahan('');
+          setKecamatanModalVisible(false);
+        }}
+        onClose={() => setKecamatanModalVisible(false)}
+        emptyText="Data Kecamatan belum tersedia. Periksa koneksi internet Anda."
+      />
+      <SearchableSelectModal
+        visible={desaModalVisible}
+        title="Pilih Desa/Kelurahan"
+        options={desaOptions}
+        onSelect={(value) => {
+          setDraftDesaKelurahan(value);
+          setDesaModalVisible(false);
+        }}
+        onClose={() => setDesaModalVisible(false)}
+        emptyText="Belum ada Desa/Kelurahan untuk Kecamatan ini."
+      />
+      <CoordinatePickerModal
+        visible={mapPickerVisible}
+        initialLatitude={draftLatitude.trim() ? parseCoordinate(draftLatitude) : undefined}
+        initialLongitude={draftLongitude.trim() ? parseCoordinate(draftLongitude) : undefined}
+        onClose={() => setMapPickerVisible(false)}
+        onConfirm={(lat, lng) => {
+          setDraftLatitude(String(lat));
+          setDraftLongitude(String(lng));
+          setMapPickerVisible(false);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -433,6 +736,30 @@ const styles = StyleSheet.create({
   typeButtonDisabled: {
     opacity: 0.5,
   },
+  postButton: {
+    marginTop: 16,
+    backgroundColor: theme.colors.success,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  postButtonText: {
+    color: '#fff',
+    fontWeight: theme.font.semiBold,
+    fontSize: 14,
+  },
+  unpostButton: {
+    marginTop: 16,
+    backgroundColor: theme.colors.warningBg,
+    borderRadius: theme.radius.sm,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  unpostButtonText: {
+    color: theme.colors.warning,
+    fontWeight: theme.font.semiBold,
+    fontSize: 14,
+  },
   typeButton: {
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.md,
@@ -450,44 +777,74 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     marginTop: 4,
   },
-  mapBox: {
+  mapLink: {
     marginTop: 16,
     backgroundColor: theme.colors.primarySoftBg,
     borderColor: theme.colors.primaryBorder,
     borderWidth: 1,
     borderRadius: theme.radius.lg,
     padding: 14,
+    alignItems: 'center',
   },
-  mapTitle: {
+  mapLinkText: {
     color: theme.colors.primaryDark,
     fontWeight: theme.font.semiBold,
     fontSize: 15,
-    marginBottom: 6,
   },
-  mapMetaText: {
-    color: theme.colors.primaryDark,
-    fontSize: 12,
-    marginBottom: 6,
+  editInfoBox: {
+    marginTop: 16,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
-  mapButton: {
+  editInfoLabel: {
+    fontSize: 13,
+    fontWeight: theme.font.medium,
+    color: theme.colors.textSecondary,
     marginTop: 10,
-    backgroundColor: theme.colors.primary,
+    marginBottom: 6,
+  },
+  editInfoInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    backgroundColor: theme.colors.background,
+  },
+  editInfoRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  editInfoDropdown: {
+    flex: 1,
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.sm,
+    paddingHorizontal: 12,
     paddingVertical: 12,
-    alignItems: 'center',
+    backgroundColor: theme.colors.background,
   },
-  mapButtonText: {
-    color: '#fff',
-    fontWeight: theme.font.semiBold,
+  dropdownValueText: {
+    color: theme.colors.textPrimary,
+    fontSize: 13,
   },
-  mapOpenButton: {
+  dropdownPlaceholderText: {
+    color: theme.colors.textMuted,
+    fontSize: 13,
+  },
+  gpsButton: {
     marginTop: 10,
     backgroundColor: theme.colors.primaryLight,
     borderRadius: theme.radius.sm,
     paddingVertical: 12,
     alignItems: 'center',
   },
-  mapOpenButtonText: {
+  gpsButtonText: {
     color: theme.colors.primaryDark,
     fontWeight: theme.font.semiBold,
   },
@@ -495,6 +852,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     backgroundColor: theme.colors.borderSoft,
     borderRadius: theme.radius.sm,
+
     paddingVertical: 12,
     alignItems: 'center',
   },
@@ -632,6 +990,33 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: theme.font.semiBold,
     fontSize: 13,
+  },
+  summaryBox: {
+    marginTop: 16,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.borderSoft,
+  },
+  summaryName: {
+    flex: 1,
+    marginRight: 8,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+  },
+  summaryCount: {
+    fontSize: 13,
+    fontWeight: theme.font.medium,
+    color: theme.colors.textSecondary,
   },
 });
 

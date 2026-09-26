@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
-import { createPackage as createPackageOnServer, listPackages as listPackagesFromServer, renamePackage as renamePackageOnServer, deletePackageOnServer, setPackageExecuted as setPackageExecutedOnServer } from './apiService';
+import { createPackage as createPackageOnServer, listPackages as listPackagesFromServer, renamePackage as renamePackageOnServer, deletePackageOnServer, setPackageExecuted as setPackageExecutedOnServer, ExecutedOutputEntry } from './apiService';
 import { safeJsonParse, parseCoordinate } from './commonUtils';
 import { clearPackageAnnotations } from './annotationService';
 
@@ -73,6 +73,12 @@ export interface WorkPackage {
    */
   executed?: boolean;
   executedAt?: string;
+  /** Tahun pelaksanaan fisik (mis. tahun anggaran). Hanya terisi jika executed=true. */
+  executedYear?: number;
+  /** Nama penyedia jasa/kontraktor pelaksana. Hanya terisi jika executed=true. */
+  executedContractor?: string;
+  /** Rincian output pelaksanaan per jenis infrastruktur. Hanya terisi jika executed=true. */
+  executedOutput?: ExecutedOutputEntry[];
 }
 
 
@@ -387,8 +393,9 @@ export async function setPackageExecutedEverywhere(
   packageId: string,
   executed: boolean,
   username?: string,
+  executedInfo?: { executedYear?: number; executedContractor?: string; executedOutput?: ExecutedOutputEntry[] },
 ): Promise<void> {
-  await setPackageExecutedOnServer(packageId, executed, username);
+  await setPackageExecutedOnServer(packageId, executed, username, executedInfo);
   const packages = await readPackages();
   const idx = packages.findIndex((p) => p.id === packageId);
   if (idx !== -1) {
@@ -396,10 +403,14 @@ export async function setPackageExecutedEverywhere(
       ...packages[idx],
       executed,
       executedAt: executed ? new Date().toISOString() : undefined,
+      executedYear: executed ? executedInfo?.executedYear : undefined,
+      executedContractor: executed ? executedInfo?.executedContractor : undefined,
+      executedOutput: executed ? executedInfo?.executedOutput : undefined,
     };
     await writePackages(packages);
   }
 }
+
 
 /**
  * Menghapus paket pekerjaan secara permanen di server (beserta seluruh
@@ -435,7 +446,14 @@ export async function syncPackagesFromServer(): Promise<void> {
     packages.forEach((pkg) => {
       if (serverIds.has(pkg.id)) {
         const sp = serverPackages.find((item) => item.packageId === pkg.id);
-        merged.set(pkg.id, sp ? { ...pkg, executed: sp.executed, executedAt: sp.executedAt } : pkg);
+        merged.set(pkg.id, sp ? {
+          ...pkg,
+          executed: sp.executed,
+          executedAt: sp.executedAt,
+          executedYear: sp.executedYear,
+          executedContractor: sp.executedContractor,
+          executedOutput: sp.executedOutput,
+        } : pkg);
       }
     });
 
@@ -451,9 +469,13 @@ export async function syncPackagesFromServer(): Promise<void> {
           itemCount: 0,
           executed: sp.executed,
           executedAt: sp.executedAt,
+          executedYear: sp.executedYear,
+          executedContractor: sp.executedContractor,
+          executedOutput: sp.executedOutput,
         });
       }
     });
+
 
     await writePackages(Array.from(merged.values()));
   } catch {

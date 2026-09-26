@@ -12,7 +12,7 @@ import { Alert } from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/types';
-import { fetchSurveyList, deleteSurvey, postPackage, unpostPackage } from '../services/apiService';
+import { fetchSurveyList, deleteSurvey } from '../services/apiService';
 import { getQueue } from '../services/queueService';
 import { EDIT_FIELDS } from '../config';
 import { getCurrentUser } from '../services/authService';
@@ -26,6 +26,7 @@ const DataRowCard = memo(function DataRowCard({
   isAdmin,
   canEdit,
   canDeleteData,
+  currentUsername,
   onDelete,
   packageName,
 }: {
@@ -34,12 +35,20 @@ const DataRowCard = memo(function DataRowCard({
   isAdmin: boolean;
   canEdit: boolean;
   canDeleteData: boolean;
+  currentUsername?: string;
   onDelete: (infrastructureType: string, surveyId: string) => void;
   packageName: string;
 }) {
   const isPosted = item['Status'] === 'Diposting';
   const isSending = item.__offlineQueueItem?.status === 'sending';
-  const canModifyThis = !isPosted || isAdmin;
+  // Akuntabilitas per item: baris yang punya "Username Pembuat" (ditulis
+  // saat baris ini dibuat) hanya boleh diubah/dihapus oleh pembuatnya
+  // sendiri atau admin, meskipun pengguna lain punya izin edit/hapus secara
+  // umum. Baris lama tanpa nilai ini (kosong) tetap mengikuti izin umum saja,
+  // supaya data lama tidak mendadak terkunci untuk semua orang.
+  const creatorUsername = (item['Username Pembuat'] || '').toString().trim().toLowerCase();
+  const isOwnItem = !creatorUsername || creatorUsername === (currentUsername || '').trim().toLowerCase();
+  const canModifyThis = (!isPosted || isAdmin) && (isAdmin || isOwnItem);
   const canEditThis = canModifyThis && canEdit && !isSending;
   const canDeleteThis = canModifyThis && canDeleteData;
 
@@ -100,6 +109,7 @@ export default function PackageDataScreen({ route, navigation }: Props) {
         'ID Item Pekerjaan': data.itemId,
         'Nama Paket': data.packageName || packageName,
         'Nama Surveyor': data.surveyorName || '',
+        'Username Pembuat': data.username || '',
         'Alamat/Keterangan Lokasi': data.locationNote || '',
         'Timestamp': item.createdAt,
         'Status': 'Belum Dikirim',
@@ -142,11 +152,11 @@ export default function PackageDataScreen({ route, navigation }: Props) {
   );
 
   // Status paket dianggap "Diposting" jika SEMUA data di dalamnya sudah diposting.
+  // Posting/pembatalan posting kini dilakukan dari PackageDetailScreen ("Ubah
+  // Paket"); layar ini hanya menampilkan status untuk keperluan kunci CRUD baris.
   const isPackagePosted = rows.length > 0 && rows.every((row) => row['Status'] === 'Diposting');
-  const canModifyPackage = !isPackagePosted || isAdmin;
   const canEdit = isAdmin || user?.permissions?.canEdit !== false;
   const canDeleteData = isAdmin || user?.permissions?.canDelete !== false;
-  const canPost = isAdmin || user?.permissions?.canPost !== false;
 
   const handleDelete = (infrastructureType: string, surveyId: string) => {
     Alert.alert('Hapus Data', 'Yakin ingin menghapus data ini? Tindakan ini tidak bisa dibatalkan.', [
@@ -165,58 +175,6 @@ export default function PackageDataScreen({ route, navigation }: Props) {
       },
     ]);
   };
-
-  const handlePostPackage = () => {
-    Alert.alert(
-      'Posting Paket Pekerjaan',
-      `Semua data survei (${rows.length} item) di paket "${packageName}" akan ditandai "Survei Selesai" (dikunci) sekaligus. Setelah itu, data tidak dapat diubah/dihapus lagi kecuali oleh admin. Lanjutkan?`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Posting',
-          onPress: async () => {
-            try {
-              await postPackage(packageId, user?.username);
-              setRows((prev) => prev.map((row) => ({ ...row, Status: 'Diposting' })));
-            } catch (err: any) {
-              Alert.alert('Gagal Posting', err?.message || 'Terjadi kesalahan saat memposting paket.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleUnpostPackage = () => {
-    Alert.alert(
-      'Batalkan Status Survei Selesai',
-      `Yakin ingin membuka kunci seluruh data di paket "${packageName}" (batal "Survei Selesai") agar bisa diedit kembali?`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Batalkan Posting',
-          onPress: async () => {
-            try {
-              await unpostPackage(packageId, user?.username);
-              setRows((prev) => prev.map((row) => ({ ...row, Status: 'Belum Diposting' })));
-            } catch (err: any) {
-              Alert.alert('Gagal', err?.message || 'Terjadi kesalahan saat membatalkan posting paket.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handlePrintReport = () => {
-    if (rows.length === 0) {
-      Alert.alert('Tidak Ada Data', 'Belum ada data survei untuk ditampilkan di paket ini.');
-      return;
-    }
-    navigation.navigate('PackageReport', { packageId, packageName, rows });
-  };
-
-
 
   const filteredRows = useMemo(() => {
     const query = searchText.trim().toLowerCase();
@@ -246,29 +204,6 @@ export default function PackageDataScreen({ route, navigation }: Props) {
           ? `${filteredRows.length} dari ${rows.length} data ditemukan`
           : `${rows.length} data survei ditemukan`}
       </Text>
-
-      <View style={styles.packageActionRow}>
-        {isPackagePosted ? (
-          isAdmin && (
-            <TouchableOpacity style={styles.unpostButton} onPress={handleUnpostPackage}>
-              <Text style={styles.unpostButtonText}>Batalkan Posting Paket</Text>
-            </TouchableOpacity>
-          )
-        ) : (
-          canPost && (
-            <TouchableOpacity
-              style={[styles.postButton, rows.length === 0 && styles.buttonDisabled]}
-              disabled={rows.length === 0}
-              onPress={handlePostPackage}
-            >
-              <Text style={styles.postButtonText}>Posting Paket Pekerjaan</Text>
-            </TouchableOpacity>
-          )
-        )}
-        <TouchableOpacity style={styles.printButton} onPress={handlePrintReport}>
-          <Text style={styles.printButtonText}>Lihat Laporan Tabel</Text>
-        </TouchableOpacity>
-      </View>
 
       <TextInput
         style={styles.searchInput}
@@ -305,6 +240,7 @@ export default function PackageDataScreen({ route, navigation }: Props) {
               isAdmin={!!isAdmin}
               canEdit={!!canEdit}
               canDeleteData={!!canDeleteData}
+              currentUsername={user?.username}
               onDelete={handleDelete}
               packageName={packageName}
             />
@@ -331,23 +267,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
-  },
-  packageActionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 12,
-  },
-  printButton: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  printButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
   },
   subtitle: {
     fontSize: 13,
@@ -441,28 +360,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.4,
-  },
-  postButton: {
-    backgroundColor: '#16a34a',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  postButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  unpostButton: {
-    backgroundColor: '#fef3c7',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  unpostButtonText: {
-    color: '#92400e',
-    fontWeight: '600',
-    fontSize: 13,
   },
 });
 

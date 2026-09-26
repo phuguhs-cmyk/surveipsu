@@ -5,8 +5,8 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
+  FlatList,
+  RefreshControl,
   ActivityIndicator,
 } from 'react-native';
 import { Alert } from '../utils/alert';
@@ -24,7 +24,6 @@ import { fetchSurveyList } from '../services/apiService';
 import { logout, getCurrentUser } from '../services/authService';
 import { getQueue } from '../services/queueService';
 import { AuthUser } from '../types';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { theme } from '../theme';
 import { getAvatarColor, getAvatarInitial } from '../utils/avatar';
 import { DashboardStatChips } from '../components/DashboardStatChips';
@@ -41,6 +40,7 @@ export default function PackageListScreen({ route, navigation }: Props) {
   const { surveyorName } = route.params;
   const [packages, setPackages] = useState<WorkPackage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [searchText, setSearchText] = useState('');
   const [visibleCount, setVisibleCount] = useState(LIST_PAGE_SIZE);
@@ -222,6 +222,19 @@ export default function PackageListScreen({ route, navigation }: Props) {
     }, [loadPackages])
   );
 
+  const handleViewReport = async (pkg: WorkPackage) => {
+    try {
+      const rows = await fetchSurveyList(undefined, pkg.id);
+      if (!rows || rows.length === 0) {
+        Alert.alert('Tidak Ada Data', 'Belum ada data survei untuk ditampilkan di paket ini.');
+        return;
+      }
+      navigation.navigate('PackageReport', { packageId: pkg.id, packageName: pkg.name, rows });
+    } catch (err: any) {
+      Alert.alert('Gagal Memuat', err?.message || 'Tidak dapat mengambil data laporan paket ini.');
+    }
+  };
+
   const handleDeletePackage = (pkg: WorkPackage) => {
     Alert.alert(
       'Hapus Paket Pekerjaan',
@@ -260,6 +273,15 @@ export default function PackageListScreen({ route, navigation }: Props) {
     );
   };
 
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadPackages();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadPackages]);
+
   const handleLogout = () => {
 
     Alert.alert('Keluar', 'Yakin ingin keluar dari akun ini?', [
@@ -275,21 +297,9 @@ export default function PackageListScreen({ route, navigation }: Props) {
     ]);
   };
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
-    >
-      <KeyboardAwareScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        enableOnAndroid
-        extraScrollHeight={24}
-        extraHeight={120}
-      >
-        <View style={styles.header}>
+  const listHeader = (
+    <View>
+      <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Paket Pekerjaan</Text>
         </View>
@@ -368,31 +378,21 @@ export default function PackageListScreen({ route, navigation }: Props) {
           {filteredPackages.length} dari {scopedPackages.length} paket ditemukan
         </Text>
       ) : null}
+    </View>
+  );
 
-      {loading && packages.length === 0 ? (
-        <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 12 }} />
-      ) : filteredPackages.length === 0 ? (
-        <Text style={styles.emptyText}>
-          {searchText.trim()
-            ? 'Tidak ada paket yang cocok dengan pencarian.'
-            : scopeFilter === 'mine'
-              ? 'Anda belum memiliki paket pekerjaan. Buat paket baru di atas, atau tekan "Semua Paket" untuk melihat paket surveyor lain.'
-              : 'Belum ada paket pekerjaan. Buat paket baru di atas.'}
-        </Text>
-      ) : (
-        <>
-          {visiblePackages.map((item) => {
-            const status = derivePackageStatus({ itemCount: item.itemCount || 0, isPosted: !!item.posted });
-            const canModify = !item.posted;
-            const statusLabel = status === 'posted' ? 'Survei Selesai' : status === 'in_progress' ? 'Dalam Proses' : 'Belum Ada Data';
-            const ownerName = item.surveyorName || surveyorName;
-            return (
-              <View key={item.id} style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View style={[styles.avatar, { backgroundColor: getAvatarColor(ownerName) }]}>
-                    <Text style={styles.avatarText}>{getAvatarInitial(ownerName)}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
+  const renderPackageItem = ({ item }: { item: WorkPackage }) => {
+    const status = derivePackageStatus({ itemCount: item.itemCount || 0, isPosted: !!item.posted });
+    const canModify = !item.posted;
+    const statusLabel = status === 'posted' ? 'Survei Selesai' : status === 'in_progress' ? 'Dalam Proses' : 'Belum Ada Data';
+    const ownerName = item.surveyorName || surveyorName;
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeaderRow}>
+          <View style={[styles.avatar, { backgroundColor: getAvatarColor(ownerName) }]}>
+            <Text style={styles.avatarText}>{getAvatarInitial(ownerName)}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
                     <TouchableOpacity
                       onPress={() =>
                         navigation.navigate('PackageDetail', {
@@ -415,17 +415,54 @@ export default function PackageListScreen({ route, navigation }: Props) {
 
 
                 <View style={styles.cardActionRow}>
+                  {canEditPackage && canModify ? (
+                    <TouchableOpacity
+                      style={styles.viewDataButton}
+                      onPress={() =>
+                        navigation.navigate('PackageDetail', {
+                          packageId: item.id,
+                          packageName: item.name,
+                          surveyorName,
+                        })
+                      }
+                    >
+                      <Text style={styles.viewDataButtonText}>Ubah Paket</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.viewDataButton}
+                      onPress={() =>
+                        navigation.navigate('PackageDetail', {
+                          packageId: item.id,
+                          packageName: item.name,
+                          surveyorName,
+                        })
+                      }
+                    >
+                      <Text style={styles.viewDataButtonText}>Detail Paket</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity
                     style={styles.viewDataButton}
                     onPress={() =>
-                      navigation.navigate('PackageDetail', {
+                      navigation.navigate('Map', {
                         packageId: item.id,
                         packageName: item.name,
                         surveyorName,
                       })
                     }
                   >
-                    <Text style={styles.viewDataButtonText}>Detail Paket</Text>
+                    <Text style={styles.viewDataButtonText}>Peta Lokasi</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.cardActionRowSecondary}>
+                  <TouchableOpacity
+                    style={styles.viewDataButton}
+                    onPress={() => handleViewReport(item)}
+                  >
+                    <Text style={styles.viewDataButtonText}>Laporan Tabel</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -437,45 +474,68 @@ export default function PackageListScreen({ route, navigation }: Props) {
                       })
                     }
                   >
-                    <Text style={styles.viewDataButtonText}>Kelola Data (Edit/Hapus)</Text>
+                    <Text style={styles.viewDataButtonText}>Kelola Data</Text>
                   </TouchableOpacity>
+                </View>
 
-                  {canEditPackage && canModify && (
-                    <TouchableOpacity
-                      style={styles.viewDataButton}
-                      onPress={() =>
-                        navigation.navigate('CreatePackage', {
-                          surveyorName,
-                          editPackageId: item.id,
-                          packageName: item.name,
-                          kecamatan: item.kecamatan,
-                          desaKelurahan: item.desaKelurahan,
-                        })
-                      }
-                    >
-                      <Text style={styles.viewDataButtonText}>Ubah Paket</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  {canDeletePackage && canModify && (
+                {canDeletePackage && canModify && (
+                  <View style={styles.cardActionRowSecondary}>
                     <TouchableOpacity style={styles.deletePackageButton} onPress={() => handleDeletePackage(item)}>
                       <Text style={styles.deletePackageButtonText}>Hapus Paket</Text>
                     </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            );
-          })}
+                  </View>
+                )}
+      </View>
+    );
+  };
 
-          {hasMorePackages && (
-            <TouchableOpacity style={styles.loadMoreButton} onPress={loadMorePackages}>
-              <Text style={styles.loadMoreText}>Muat lebih</Text>
-            </TouchableOpacity>
-          )}
-        </>
+  return (
+    <View style={styles.container}>
+      {/* Header, statistik, pencarian, dan filter ditempatkan DI LUAR FlatList
+          (bukan sebagai ListHeaderComponent) supaya bagian ini tetap diam
+          ("sticky") saat daftar paket di-scroll, sama seperti perilaku di
+          AdminDashboardScreen. Hanya daftar kartu paket di bawah yang
+          discroll. */}
+      {listHeader}
+      {loading && packages.length === 0 ? (
+        <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 12 }} />
+      ) : (
+        <FlatList
+          data={visiblePackages}
+          keyExtractor={(item) => item.id}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          removeClippedSubviews
+          initialNumToRender={visiblePackages.length || LIST_PAGE_SIZE}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          updateCellsBatchingPeriod={50}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[theme.colors.primary]} />
+          }
+          onEndReached={loadMorePackages}
+          onEndReachedThreshold={0.3}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              {searchText.trim()
+                ? 'Tidak ada paket yang cocok dengan pencarian.'
+                : scopeFilter === 'mine'
+                  ? 'Anda belum memiliki paket pekerjaan. Buat paket baru di atas, atau tekan "Semua Paket" untuk melihat paket surveyor lain.'
+                  : 'Belum ada paket pekerjaan. Buat paket baru di atas.'}
+            </Text>
+          }
+          ListFooterComponent={
+            hasMorePackages ? (
+              <TouchableOpacity style={styles.loadMoreButton} onPress={loadMorePackages}>
+                <Text style={styles.loadMoreText}>Muat lebih</Text>
+              </TouchableOpacity>
+            ) : null
+          }
+          renderItem={renderPackageItem}
+        />
       )}
-      </KeyboardAwareScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -748,9 +808,13 @@ const styles = StyleSheet.create({
   },
   cardActionRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
     marginTop: 10,
+  },
+  cardActionRowSecondary: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
   },
   addItemButton: {
     backgroundColor: theme.colors.primary,
@@ -764,25 +828,30 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   viewDataButton: {
+    flex: 1,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.sm,
     paddingVertical: 9,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: theme.colors.primary,
+    alignItems: 'center',
   },
   viewDataButtonText: {
     color: theme.colors.primary,
     fontWeight: theme.font.medium,
-    fontSize: 13,
+    fontSize: 12,
+    textAlign: 'center',
   },
   deletePackageButton: {
+    flex: 1,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.sm,
     paddingVertical: 9,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: theme.colors.danger,
+    alignItems: 'center',
   },
   deletePackageButtonText: {
     color: theme.colors.danger,

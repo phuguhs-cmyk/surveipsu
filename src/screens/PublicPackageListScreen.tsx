@@ -64,12 +64,13 @@ interface PublicPackageRow extends ServerPackage {
 }
 
 /**
- * Layar untuk akun Viewer (hanya bisa melihat laporan): menampilkan daftar
- * paket pekerjaan dan jumlah data survei di dalamnya. Layar ini murni
- * bersifat baca (read-only) — TIDAK ada tombol tambah/ubah/hapus/posting
- * apa pun, dan hanya memanggil endpoint publicListPackages/publicList di
- * server (tanpa sessionToken untuk pengambilan data), sehingga tidak
- * mungkin mengubah data.
+ * Layar untuk akun Viewer (hanya bisa melihat data, tidak bisa
+ * mengubah/menghapus): menampilkan daftar paket pekerjaan dan jumlah data
+ * survei di dalamnya, apa pun statusnya (draft/proses/selesai). Layar ini
+ * murni bersifat baca (read-only) — TIDAK ada tombol tambah/ubah/hapus/
+ * posting apa pun, dan hanya memanggil endpoint baca-tanpa-token
+ * publicListPackages/publicList di server (tanpa sessionToken untuk
+ * pengambilan data), sehingga tidak mungkin mengubah data.
  */
 export default function PublicPackageListScreen({ navigation }: Props) {
   const [packages, setPackages] = useState<PublicPackageRow[]>([]);

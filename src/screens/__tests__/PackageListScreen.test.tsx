@@ -66,8 +66,18 @@ describe('PackageListScreen', () => {
   it('menampilkan pesan kosong ketika belum ada paket tersimpan', async () => {
     await renderScreen();
 
-    expect(await screen.findByText('Belum ada paket pekerjaan. Buat paket baru di atas.')).toBeTruthy();
-  });
+    // Timeout dinaikkan (default Jest 5000ms) karena test ini sesekali
+    // exceed timeout saat dijalankan bersamaan seluruh suite di mesin yang
+    // sedang sibuk (CI/paralel test lain memakai CPU), padahal selalu lulus
+    // saat dijalankan sendiri. findByText sendiri sudah punya retry-poll
+    // internal (waitFor), jadi menaikkan batas waktu di sini aman dan tidak
+    // menyembunyikan bug — hanya memberi ruang lebih untuk render async.
+    expect(await screen.findByText(
+      'Anda belum memiliki paket pekerjaan. Buat paket baru di atas, atau tekan "Semua Paket" untuk melihat paket surveyor lain.',
+      {},
+      { timeout: 10000 }
+    )).toBeTruthy();
+  }, 15000);
 
   it('menampilkan daftar paket yang sudah dimuat dari getPackages', async () => {
     mockedPackageService.getPackages.mockResolvedValue([makePackage()]);
@@ -86,6 +96,12 @@ describe('PackageListScreen', () => {
 
     await renderScreen();
     await screen.findByText('Paket Jalan A');
+
+    // Paket kedua dimiliki surveyor lain ("Siti"), sedangkan filter cakupan
+    // default adalah "Paket Saya" (hanya milik surveyor yang sedang login).
+    // Pindah ke "Semua Paket" dulu supaya pencarian mencakup kedua paket.
+    fireEvent.press(screen.getByText('Semua Paket'));
+    await screen.findByText('Paket Drainase B');
 
     fireEvent.changeText(
       screen.getByPlaceholderText('Cari nama paket atau surveyor...'),

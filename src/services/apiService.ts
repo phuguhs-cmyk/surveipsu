@@ -338,15 +338,37 @@ export async function renamePackage(
   return post(await authBody({ action: 'renamePackage', packageId, packageName, username, kecamatan, desaKelurahan, packageLatitude, packageLongitude }));
 }
 
+export interface ExecutedOutputEntry {
+  infraType: string;
+  panjang?: string;
+  tinggi?: string;
+  catatan?: string;
+}
+
 /**
  * Menandai (atau membatalkan tanda) sebuah paket pekerjaan sebagai "Sudah
  * Dilaksanakan" di lapangan. Hanya admin yang diizinkan (lihat
  * handleSetPackageExecuted di Code.gs). Status ini terpisah dari status
- * "Diposting"/"Survei Selesai" yang sudah ada.
+ * "Diposting"/"Survei Selesai" yang sudah ada. Saat `executed` true, info
+ * pelaksanaan (tahun, penyedia jasa, rincian output) wajib disertakan.
  */
-export async function setPackageExecuted(packageId: string, executed: boolean, username?: string): Promise<ApiResponse> {
-  return post(await authBody({ action: 'setPackageExecuted', packageId, executed, username }));
+export async function setPackageExecuted(
+  packageId: string,
+  executed: boolean,
+  username?: string,
+  executedInfo?: { executedYear?: number; executedContractor?: string; executedOutput?: ExecutedOutputEntry[] },
+): Promise<ApiResponse> {
+  return post(await authBody({
+    action: 'setPackageExecuted',
+    packageId,
+    executed,
+    username,
+    executedYear: executedInfo?.executedYear,
+    executedContractor: executedInfo?.executedContractor,
+    executedOutput: executedInfo?.executedOutput,
+  }));
 }
+
 
 export async function deletePackageOnServer(packageId: string, username?: string): Promise<ApiResponse> {
   return post(await authBody({ action: 'deletePackage', packageId, username }));
@@ -444,7 +466,14 @@ export interface ServerPackage {
   /** true jika paket ini sudah ditandai admin sebagai "Sudah Dilaksanakan" di lapangan. */
   executed?: boolean;
   executedAt?: string;
+  /** Tahun pelaksanaan fisik (mis. tahun anggaran). Hanya terisi jika executed=true. */
+  executedYear?: number;
+  /** Nama penyedia jasa/kontraktor pelaksana. Hanya terisi jika executed=true. */
+  executedContractor?: string;
+  /** Rincian output per jenis infrastruktur. Hanya terisi jika executed=true. */
+  executedOutput?: ExecutedOutputEntry[];
 }
+
 
 export async function createPackage(
   packageName: string,
@@ -475,12 +504,13 @@ export async function listPackages(): Promise<ServerPackage[]> {
   });
 }
 
-// ===================== AKSES PUBLIK (TANPA LOGIN, HANYA BACA) =====================
+// ===================== AKSES VIEWER (BACA-TANPA-TOKEN) =====================
 // Fungsi-fungsi berikut TIDAK mengirim sessionToken sama sekali dan hanya
-// memanggil action publik di server (publicListPackages/publicList) yang
-// murni membaca data. Dipakai oleh alur "Lihat sebagai Publik" agar
-// masyarakat umum bisa melihat data survei tanpa perlu login, dan tanpa
-// kemungkinan mengubah data apa pun (tidak ada fungsi tulis yang dipanggil).
+// memanggil action baca-tanpa-token di server (publicListPackages/publicList)
+// yang murni membaca data. Dipakai oleh akun ber-role "viewer" (yang tetap
+// WAJIB login lebih dulu, lihat LoginScreen) supaya bisa melihat SELURUH
+// data survei apa pun statusnya, tanpa kemungkinan mengubah data apa pun
+// (tidak ada fungsi tulis yang dipanggil lewat jalur ini).
 
 export async function publicListPackages(): Promise<ServerPackage[]> {
   const cacheKey = 'publicListPackages';
@@ -570,15 +600,15 @@ export async function listAnnotationsFromServer(packageId: string): Promise<Serv
   return (json as any).annotations || [];
 }
 
-/** Versi PUBLIK (tanpa sessionToken) dari `listAnnotationsFromServer`, dipakai
- * oleh akun Viewer/publik saat melihat peta lokasi. Diperlukan karena
- * MapScreen sebelumnya SELALU memakai action 'listAnnotations' yang
- * mewajibkan sesi login valid; jika sesi Viewer sudah kedaluwarsa (yang
- * mudah terjadi karena layar-layar publik lain tidak pernah memvalidasi
- * sesi), permintaan anotasi gagal diam-diam sehingga anotasi tidak pernah
- * muncul di peta untuk akun Viewer. Server hanya mengembalikan anotasi milik
- * paket yang SUDAH DIPOSTING seluruhnya (lihat action 'publicListAnnotations'
- * di Code.gs), konsisten dengan pembatasan akses publik lainnya. */
+/** Versi khusus akun Viewer (tanpa sessionToken), dipakai saat melihat peta
+ * lokasi. Diperlukan karena MapScreen sebelumnya SELALU memakai action
+ * 'listAnnotations' yang mewajibkan sesi login valid; jika sesi Viewer sudah
+ * kedaluwarsa (yang mudah terjadi karena layar-layar Viewer lain tidak
+ * pernah memvalidasi sesi), permintaan anotasi gagal diam-diam sehingga
+ * anotasi tidak pernah muncul di peta untuk akun Viewer. Server kini
+ * mengembalikan anotasi milik paket apa pun (lihat action
+ * 'publicListAnnotations' di Code.gs), konsisten dengan akses Viewer ke
+ * seluruh status data. */
 export async function publicListAnnotationsFromServer(packageId: string): Promise<ServerAnnotation[]> {
   const params = new URLSearchParams({ action: 'publicListAnnotations', packageId });
   const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);
@@ -626,9 +656,9 @@ export async function listProposalsFromServer(packageId?: string): Promise<Propo
   return (json as any).proposals || [];
 }
 
-/** Versi PUBLIK (tanpa sessionToken), dipakai oleh akun Viewer/publik untuk
- * melihat proposal paket yang sudah diposting (lihat 'publicListProposals'
- * di Code.gs). */
+/** Versi khusus akun Viewer (tanpa sessionToken), dipakai untuk melihat
+ * proposal paket apa pun statusnya (lihat 'publicListProposals' di Code.gs),
+ * konsisten dengan akses Viewer ke seluruh status data. */
 export async function publicListProposalsFromServer(packageId: string): Promise<ProposalDocument[]> {
   const params = new URLSearchParams({ action: 'publicListProposals', packageId });
   const response = await fetchWithRetry(`${CONFIG.GAS_WEB_APP_URL}?${params.toString()}`);

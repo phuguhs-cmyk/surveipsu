@@ -1,4 +1,4 @@
-﻿import { LEAFLET_JS } from '../assets/leafletJs';
+import { LEAFLET_JS } from '../assets/leafletJs';
 import { LEAFLET_CSS } from '../assets/leafletCss';
 import { MAPLIBRE_GL_JS } from '../assets/maplibreGlJs';
 import { MAPLIBRE_GL_CSS } from '../assets/maplibreGlCss';
@@ -28,9 +28,9 @@ export interface LeafletMarker {
   label?: string;
   /**
    * Kunci pengelompokan marker (mis. nama jenis infrastruktur: "Jalan",
-   * "Jembatan", dst). Dipakai untuk membangun kontrol lapisan (legend
-   * show/hide) per jenis saat `showLayerFilter` aktif, sehingga peta yang
-   * padat titik bisa difokuskan ke satu/dua jenis infrastruktur saja.
+   * "Jembatan", dst). Sebelumnya dipakai untuk panel filter lapisan
+   * per-jenis di peta (kini dihapus); tetap disimpan untuk keperluan lain
+   * (mis. pewarnaan/analitik) tanpa memengaruhi tampilan.
    */
   groupKey?: string;
 }
@@ -50,8 +50,14 @@ export interface BuildMapHtmlOptions {
   centerLat: number;
   centerLng: number;
   zoom: number;
-  /** Mode tampilan peta online: street, satellite, atau hybrid. */
-  mapMode?: OnlineMapMode;
+  /**
+   * Mode tampilan peta saat pertama dimuat: street/satellite/hybrid (online)
+   * atau 'offline' (PMTiles bawaan APK, lihat `offlinePmtilesUri`). Nilai
+   * 'offline' HANYA efektif jika `offlinePmtilesUri` juga diisi; jika tidak,
+   * `activateMapMode()` di dalam skrip akan jatuh kembali ke 'street'
+   * (lihat `modeLayers[mode] || modeLayers.street`).
+   */
+  mapMode?: OnlineMapMode | 'offline';
   minZoom: number;
   maxZoom: number;
   /**
@@ -120,10 +126,10 @@ export interface BuildMapHtmlOptions {
    */
   packageSearchEnabled?: boolean;
   /**
-   * Jika `true`, menampilkan panel legenda/filter di pojok kiri bawah peta
-   * berisi checkbox per `LeafletMarker.groupKey` (mis. per jenis
-   * infrastruktur), sehingga pengguna bisa menyembunyikan/menampilkan
-   * kelompok marker tertentu saat peta padat titik. Default `false`.
+   * @deprecated Panel filter jenis infrastruktur (checkbox per
+   * `LeafletMarker.groupKey`) sudah dihapus dari tampilan peta karena
+   * menumpuk/menutupi peta. Properti ini tidak lagi berpengaruh, dibiarkan
+   * ada agar pemanggil lama tidak error.
    */
   showLayerFilter?: boolean;
   /**
@@ -140,16 +146,12 @@ export interface BuildMapHtmlOptions {
 function buildHeadHtml(opts: BuildMapHtmlOptions): string {
   const showDrawingTools = opts.showDrawingTools !== false;
   const packageSearchEnabled = !!opts.packageSearchEnabled;
-  const showLayerFilter = !!opts.showLayerFilter;
-  const layerFilterHtml = showLayerFilter
-    ? `<div class="layerfilter" id="layerFilter"></div>`
-    : '';
   const offlinePmtilesButtonHtml = opts.offlinePmtilesUri
-    ? `\n  <button class="mode-btn" data-mode="offline">Peta Offline</button>`
+    ? `\n  <button class="mode-btn${opts.mapMode === 'offline' ? ' active' : ''}" data-mode="offline">Peta Offline</button>`
     : '';
-  const mapModeButtonsInner = `<button class="mode-btn active" data-mode="street">Peta</button>
-  <button class="mode-btn" data-mode="satellite">Satelit</button>
-  <button class="mode-btn" data-mode="hybrid">Hybrid</button>${offlinePmtilesButtonHtml}`;
+  const mapModeButtonsInner = `<button class="mode-btn${opts.mapMode !== 'offline' && (opts.mapMode ?? 'street') === 'street' ? ' active' : ''}" data-mode="street">Peta</button>
+  <button class="mode-btn${opts.mapMode === 'satellite' ? ' active' : ''}" data-mode="satellite">Satelit</button>
+  <button class="mode-btn${opts.mapMode === 'hybrid' ? ' active' : ''}" data-mode="hybrid">Hybrid</button>${offlinePmtilesButtonHtml}`;
   // Saat toolbar gambar (Garis/Polygon/Kunci Peta) DAN tombol mode peta
   // (Peta/Satelit/Hybrid) sama-sama tampil, keduanya digabung ke satu
   // container flex-wrap yang sama. Sebelumnya masing-masing punya
@@ -245,11 +247,6 @@ ${vectorHead}
   .mapmode { flex: 0 0 auto; display: flex; gap: 6px; background: rgba(15, 23, 42, 0.8); padding: 6px; border-radius: 10px; }
   .mode-btn { background: transparent; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700; white-space: nowrap; }
   .mode-btn.active { background: #2563eb; border-color: #2563eb; }
-  .layerfilter { position: absolute; bottom: 10px; left: 10px; z-index: 1000; background: rgba(255,255,255,0.95); border-radius: 10px; padding: 8px 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); font-size: 12px; max-width: 60%; max-height: 40%; overflow-y: auto; }
-  .layerfilter .lf-title { font-weight: 700; color: #0f172a; margin-bottom: 4px; }
-  .layerfilter label { display: flex; align-items: center; gap: 6px; color: #334155; padding: 2px 0; white-space: nowrap; }
-  .layerfilter input { margin: 0; }
-  .lf-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .marker-label { background: rgba(15,23,42,0.85); color: #fff; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.4); padding: 2px 6px; font-size: 11px; font-weight: 600; border-radius: 6px; }
   .marker-label::before { display: none; }
 </style>
@@ -258,7 +255,6 @@ ${vectorHead}
 <div id="map"></div>
 ${topBarHtml}
 ${toolbarHtml}
-${layerFilterHtml}
 <script>${LEAFLET_JS}</script>
 ${vectorPluginScript}
 <script>
@@ -289,10 +285,23 @@ function buildScript(
   const satelliteUrl = CONFIG.ONLINE_MAP_MODES.satellite.tileUrlTemplate;
   const hybridLabelUrl = CONFIG.ONLINE_MAP_MODES.hybrid.labelTileUrlTemplate;
   const maxNativeZoom = opts.maxZoom;
+  // PENTING: Esri World_Imagery (dipakai untuk mode Satelit/Hybrid) TIDAK
+  // memiliki citra resolusi tinggi di semua wilayah (khususnya area
+  // pedesaan seperti Banjarnegara) sampai MAX_NATIVE_ZOOM (20). Alih-alih
+  // gagal/404, Esri MENGEMBALIKAN TILE PNG SUNGGUHAN berisi watermark teks
+  // "Map data not yet available at this zoom level for this region" begitu
+  // diminta melebihi zoom resolusi aslinya — Leaflet merendernya apa
+  // adanya (bukan bug tampilan, melainkan tile asli dari server). Tanpa
+  // "maxNativeZoom", peta jadi tampak KOSONG/watermark begitu di-zoom
+  // dekat. Dengan batas ini, Leaflet berhenti meminta tile melebihi level
+  // yang biasanya masih tersedia, lalu meng-upscale tile terakhir (sama
+  // seperti overzoom PMTiles offline), sehingga peta tetap menampilkan
+  // citra (walau agak buram saat di-zoom sangat dekat) alih-alih watermark
+  // kosong.
+  const satelliteMaxNativeZoom = Math.min(maxNativeZoom, 18);
   const maxZoomWithOvershoot = opts.maxZoom + (opts.drawZoomOvershoot || 0);
   const showDrawingTools = opts.showDrawingTools !== false;
   const packageSearchEnabled = !!opts.packageSearchEnabled;
-  const showLayerFilter = !!opts.showLayerFilter;
   const annotationsEditable = opts.annotationsEditable !== false;
 
   const tileLayerScript = opts.onlineTileUrlTemplate
@@ -348,6 +357,11 @@ function buildScript(
   const offlineStyleScript = offlinePmtilesUri
     ? `
   var offlinePmtilesUri = ${JSON.stringify(offlinePmtilesUri)};
+  // Native zoom MAKSIMUM data PMTiles offline (lihat 'mobile-app/map-data/README.md').
+  // TIDAK sama dengan MAX_NATIVE_ZOOM (itu untuk provider ONLINE, saat ini 20).
+  // Jika file 'banjarnegara.pmtiles' diregenerasi dengan --maxzoom berbeda,
+  // NAIKKAN/TURUNKAN angka ini SESUAI agar overzoom offline tetap benar.
+  var OFFLINE_PMTILES_MAX_ZOOM = 16;
   var offlineStreetLayer = null;
   if (window.pmtiles && window.maplibregl && window.L && typeof L.maplibreGL === 'function') {
     try {
@@ -367,39 +381,102 @@ function buildScript(
       }
       var glyphsRegularBuffer = base64ToArrayBuffer(${JSON.stringify(glyphsRegularB64)});
       var glyphsBoldBuffer = base64ToArrayBuffer(${JSON.stringify(glyphsBoldB64)});
-      maplibregl.addProtocol('offlineglyph', function (params, callback) {
+      // PENTING: bundel MapLibre GL yang dipakai di sini adalah v4, yang
+      // mengubah tanda tangan addProtocol() dari gaya lama
+      // (params, callback) => ({ cancel }) menjadi gaya baru
+      // (params, abortController) => Promise<{ data }>. Sebelumnya handler
+      // ini masih memakai gaya lama dan memanggil callback(...) — pada v4,
+      // argumen kedua sebenarnya adalah AbortController (bukan function),
+      // sehingga memanggilnya sebagai fungsi selalu melempar
+      // "callback is not a function" secara ASINKRON (baru terlihat lewat
+      // window.__debugMap/map_debug). Akibatnya semua font/glyph offline
+      // gagal dimuat terus-menerus, yang pada gilirannya membuat MapLibre
+      // GL gagal merender simbol/teks dan (tergantung versi) bisa membuat
+      // seluruh render style ikut gagal tampil meski tile vector (PMTiles)
+      // sendiri sudah berhasil dimuat. Diperbaiki dengan mengikuti gaya v4:
+      // mengembalikan Promise yang resolve ke { data: ArrayBuffer }.
+      maplibregl.addProtocol('offlineglyph', function (params) {
         var isBold = /bold/i.test(params.url);
-        callback(null, isBold ? glyphsBoldBuffer : glyphsRegularBuffer, null, null);
-        return { cancel: function () {} };
+        return Promise.resolve({ data: isBold ? glyphsBoldBuffer : glyphsRegularBuffer });
       });
       var pmtilesProtocol = new pmtiles.Protocol();
       maplibregl.addProtocol('pmtiles', pmtilesProtocol.tile);
       var pmSourceUrl = 'pmtiles://' + offlinePmtilesUri;
       // PENTING: JANGAN biarkan pmtiles-js membuat sumber datanya sendiri
       // dari string URL (FetchSource) — implementasi tsb membaca file lewat
-      // *HTTP Range request* (header \"Range\") via fetch(), yang TIDAK
+      // *HTTP Range request* (header "Range") via fetch(), yang TIDAK
       // didukung oleh WebView Android/iOS untuk skema file://. Akibatnya
       // setiap pembacaan ubin gagal secara ASINKRON (tidak tertangkap oleh
-      // try/catch sinkron di sini) sehingga mode \"Peta Offline\" tampak
+      // try/catch sinkron di sini) sehingga mode "Peta Offline" tampak
       // aktif (tombol berubah) tapi peta tetap kosong/tidak pernah tampil,
       // tanpa error yang terlihat oleh pengguna. Untuk menghindarinya, file
-      // PMTiles dibaca UTUH sekali via XMLHttpRequest SINKRON (aman karena
-      // file lokal & hanya dijalankan sekali saat peta disiapkan), disimpan
-      // sebagai ArrayBuffer di memori, lalu setiap permintaan byte-range
-      // dilayani dengan slicing ArrayBuffer tsb di memori (tanpa request
-      // jaringan/berkas sama sekali).
-      var pmXhr = new XMLHttpRequest();
-      pmXhr.open('GET', offlinePmtilesUri, false);
-      pmXhr.responseType = 'arraybuffer';
-      pmXhr.send(null);
-      var pmFileBuffer = pmXhr.response;
-      if (!pmFileBuffer || !pmFileBuffer.byteLength) {
-        throw new Error('Gagal membaca file PMTiles offline (status ' + pmXhr.status + ')');
-      }
+      // PMTiles dibaca UTUH sekali via XMLHttpRequest (hanya dijalankan
+      // sekali saat peta disiapkan), disimpan sebagai ArrayBuffer di
+      // memori, lalu setiap permintaan byte-range dilayani dengan slicing
+      // ArrayBuffer tsb di memori (tanpa request jaringan/berkas sama
+      // sekali setelahnya).
+      //
+      // PENTING (bug kritis yang sebelumnya membuat mode "Peta Offline"
+      // SELALU gagal secara diam-diam): permintaan di atas sebelumnya dibuat
+      // SINKRON (pmXhr.open(..., false)) lalu men-set responseType =
+      // 'arraybuffer'. Berdasarkan spesifikasi XMLHttpRequest, MENGUBAH
+      // responseType pada request SINKRON yang TIDAK berjalan di dalam
+      // Web Worker akan MELEMPAR InvalidAccessError (DOMException) —
+      // pembatasan ini ditegakkan oleh mesin Chromium yang mendasari WebView
+      // Android. Akibatnya baris pmXhr.responseType = 'arraybuffer' selalu
+      // melempar exception setiap kali peta offline dibuka, tertangkap oleh
+      // try/catch di luar (baris di bawah), sehingga offlineStreetLayer
+      // selalu berakhir null TANPA pernah benar-benar mencoba membaca file
+      // PMTiles — tombol "Peta Offline" tampak ada tapi tidak pernah bisa
+      // menampilkan apa pun, diam-diam jatuh ke peta online.
+      //
+      // Karena getBytes() pada pmInMemorySource di bawah SUDAH berbentuk
+      // Promise (dipakai secara ASINKRON oleh pmtiles-js), permintaan file
+      // ini TIDAK perlu sinkron sama sekali. Solusinya: baca file secara
+      // ASINKRON (menghindari batasan di atas), simpan sebagai Promise yang
+      // di-resolve dengan ArrayBuffer, lalu getBytes() menunggu Promise
+      // tsb sebelum melakukan slicing byte-range di memori — tetap TANPA
+      // request jaringan/fetch() berulang (menghindari masalah Range
+      // request pada file:// yang sudah dijelaskan di atas), hanya
+      // membaca file itu SEKALI secara asinkron alih-alih sinkron.
+      var pmFileBufferPromise = new Promise(function (resolve, reject) {
+        var pmXhr = new XMLHttpRequest();
+        pmXhr.open('GET', offlinePmtilesUri, true);
+        pmXhr.responseType = 'arraybuffer';
+        pmXhr.onload = function () {
+          if (pmXhr.response && pmXhr.response.byteLength) {
+            if (window.__debugMap) window.__debugMap('pmtiles_loaded', { bytes: pmXhr.response.byteLength, uri: offlinePmtilesUri });
+            resolve(pmXhr.response);
+          } else {
+            var pmErrMsg = 'Gagal membaca file PMTiles offline (status ' + pmXhr.status + ')';
+            if (window.__debugMap) window.__debugMap('pmtiles_load_fail', { message: pmErrMsg, status: pmXhr.status, uri: offlinePmtilesUri });
+            reject(new Error(pmErrMsg));
+          }
+        };
+        pmXhr.onerror = function () {
+          var pmErrMsg2 = 'Gagal membaca file PMTiles offline (network/file error)';
+          if (window.__debugMap) window.__debugMap('pmtiles_load_fail', { message: pmErrMsg2, uri: offlinePmtilesUri });
+          reject(new Error(pmErrMsg2));
+        };
+        pmXhr.send(null);
+      });
+      // Tangkap kegagalan Promise ini agar TIDAK menjadi
+      // "unhandledrejection" global (yang di beberapa layar lain dipakai
+      // sebagai sinyal untuk fallback mode "Peta" ke raster — lihat
+      // fallbackToRasterStreet/window.addEventListener('unhandledrejection', ...)
+      // di bawah). Kegagalan sesungguhnya tetap terlempar ke pemanggil
+      // getBytes() (pmtiles-js), yang akan gagal me-render tile offline
+      // seperti seharusnya jika file benar-benar tidak terbaca.
+      pmFileBufferPromise.catch(function () {});
       var pmInMemorySource = {
         getKey: function () { return offlinePmtilesUri; },
         getBytes: function (offset, length) {
-          return Promise.resolve({ data: pmFileBuffer.slice(offset, offset + length) });
+          return pmFileBufferPromise.then(function (buffer) {
+            return { data: buffer.slice(offset, offset + length) };
+          }).catch(function (errBytes) {
+            if (window.__debugMap) window.__debugMap('pmtiles_getbytes_fail', { message: errBytes && errBytes.message });
+            throw errBytes;
+          });
         },
       };
       pmtilesProtocol.add(new pmtiles.PMTiles(pmInMemorySource));
@@ -454,7 +531,18 @@ function buildScript(
         version: 8,
         glyphs: 'offlineglyph://fonts/{fontstack}/{range}.pbf',
         sources: {
-          openmaptiles: { type: 'vector', url: pmSourceUrl },
+          // PENTING: "maxzoom" HARUS diisi eksplisit sesuai native zoom data
+          // PMTiles (lihat 'mobile-app/map-data/README.md', saat ini 16).
+          // Tanpa ini, MapLibre GL akan meminta tile PERSIS pada level zoom
+          // yang diminta pengguna (mis. 17-19) ke pmtiles-js, yang akan
+          // mengembalikan undefined untuk z > header.maxZoom (lihat
+          // getZxyAttempt di src/assets/pmtilesJs.ts) — BUKAN otomatis
+          // di-overzoom. Bug ini membuat peta offline tampak normal di zoom
+          // rendah/menengah tapi mendadak KOSONG saat di-zoom lebih dekat.
+          // Dengan "maxzoom" diisi, MapLibre GL sendiri yang melakukan
+          // overzoom (memakai ulang & membesarkan tile zoom 16 terakhir)
+          // untuk level di atasnya, sama seperti overzoom raster biasa.
+          openmaptiles: { type: 'vector', url: pmSourceUrl, maxzoom: OFFLINE_PMTILES_MAX_ZOOM },
         },
         layers: [
           { id: 'background', type: 'background', paint: { 'background-color': '#f2efe9' } },
@@ -465,7 +553,22 @@ function buildScript(
           { id: 'waterway', type: 'line', source: 'openmaptiles', 'source-layer': 'waterway', paint: { 'line-color': '#a0c8f0', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 16, 3] } },
           { id: 'building', type: 'fill', source: 'openmaptiles', 'source-layer': 'building', minzoom: 12, paint: { 'fill-color': '#d9d0c3', 'fill-outline-color': '#c2b8a8' } },
           { id: 'road-case', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', filter: ['!=', ['get', 'class'], 'path'], paint: { 'line-color': roadCaseColor, 'line-width': roadCaseWidth }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
-          { id: 'road-fill', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', paint: { 'line-color': roadColor, 'line-width': roadWidth, 'line-dasharray': ['case', ['==', ['get', 'class'], 'path'], ['literal', [2, 1.5]], ['literal', [1, 0]]] }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
+          // PENTING: 'line-dasharray' TIDAK mendukung "data expression"
+          // (nilai berbeda per-feature via ['case', ['get', ...], ...]) di
+          // spesifikasi style MapLibre GL — hanya boleh nilai konstan atau
+          // zoom-function. Sebelumnya di sini ada SATU layer 'road-fill'
+          // dengan 'line-dasharray' berbasis ['case', ['==', ['get',
+          // 'class'], 'path'], ...], yang membuat MapLibre GL MENOLAK
+          // SELURUH STYLE saat parsing (error asinkron "layers[8].paint.
+          // line-dasharray: data expressions not supported", baru
+          // terlihat via window.__debugMap/map_debug, sebab try/catch
+          // sinkron di sekitar L.maplibreGL() tidak menangkapnya) —
+          // akibatnya mode "Peta Offline" tampak aktif tapi peta selalu
+          // KOSONG. Diperbaiki dengan memecah jadi DUA layer terfilter
+          // (pola sama seperti 'road-case' di atas), masing-masing
+          // memakai 'line-dasharray' KONSTAN:
+          { id: 'road-fill', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', filter: ['!=', ['get', 'class'], 'path'], paint: { 'line-color': roadColor, 'line-width': roadWidth, 'line-dasharray': [1, 0] }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
+          { id: 'road-fill-path', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation', filter: ['==', ['get', 'class'], 'path'], paint: { 'line-color': roadColor, 'line-width': roadWidth, 'line-dasharray': [2, 1.5] }, layout: { 'line-cap': 'round', 'line-join': 'round' } },
           { id: 'boundary', type: 'line', source: 'openmaptiles', 'source-layer': 'boundary', filter: ['<=', ['get', 'admin_level'], 8], paint: { 'line-color': '#9a7a5a', 'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 1.5], 'line-dasharray': [3, 2] } },
           { id: 'housenumber', type: 'symbol', source: 'openmaptiles', 'source-layer': 'housenumber', minzoom: 18, layout: { 'text-field': ['get', 'housenumber'], 'text-size': 9, 'text-font': ['Klokantech Noto Sans Regular'] }, paint: { 'text-color': '#8a7a63', 'text-halo-color': '#fff', 'text-halo-width': 1 } },
           { id: 'poi', type: 'circle', source: 'openmaptiles', 'source-layer': 'poi', minzoom: 14, paint: { 'circle-radius': 3, 'circle-color': '#ef4444', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } },
@@ -481,7 +584,34 @@ function buildScript(
       };
 
       offlineStreetLayer = L.maplibreGL({ style: offlineStyle, attribution: '&copy; OpenMapTiles &copy; OpenStreetMap contributors' });
+      // PENTING: sama seperti mode "Peta" (street) online di bawah,
+      // pembuatan L.maplibreGL() di atas hanya melempar exception SINKRON
+      // untuk kegagalan yang terdeteksi segera (mis. argumen tidak valid).
+      // Kegagalan render sesungguhnya (mis. worker gagal parsing PMTiles,
+      // konteks WebGL gagal dibuat, style/source error) terjadi secara
+      // ASINKRON di dalam MapLibre GL dan TIDAK tertangkap oleh try/catch
+      // ini — sebelumnya ini membuat mode "Peta Offline" tampak aktif
+      // (tombol berubah, layer ditambahkan) padahal peta tetap kosong
+      // tanpa pesan error apa pun yang terlihat. Pasang listener 'error'
+      // pada instance maplibregl.Map (tersedia setelah layer ditambahkan
+      // ke peta lewat event 'add') dan kirim detailnya ke React Native
+      // (lewat window.__debugMap, lihat sendMessage/handleWebViewMessage
+      // di MapScreen.tsx) supaya kegagalan sesungguhnya terlihat saat
+      // debugging, alih-alih diam-diam blank.
+      offlineStreetLayer.once('add', function () {
+        try {
+          var offlineGlMap = offlineStreetLayer.getMaplibreMap && offlineStreetLayer.getMaplibreMap();
+          if (offlineGlMap && typeof offlineGlMap.on === 'function') {
+            offlineGlMap.on('error', function (ev) {
+              if (window.__debugMap) {
+                window.__debugMap('offline_maplibre_error', { message: ev && ev.error && ev.error.message });
+              }
+            });
+          }
+        } catch (eOfflineListener) {}
+      });
     } catch (e) {
+      if (window.__debugMap) window.__debugMap('offline_init_fail', { message: e && e.message });
       offlineStreetLayer = null;
     }
   }
@@ -584,10 +714,10 @@ ${offlineStyleScript}
 
   var modeLayers = {
     street: streetLayer,
-    satellite: L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Esri' }),
+    satellite: L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: MAX_ZOOM, maxNativeZoom: ${satelliteMaxNativeZoom}, attribution: '&copy; Esri' }),
     hybrid: L.layerGroup([
-      L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Esri' }),
-      L.tileLayer(${JSON.stringify(hybridLabelUrl)}, { maxZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Carto' })
+      L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: MAX_ZOOM, maxNativeZoom: ${satelliteMaxNativeZoom}, attribution: '&copy; Esri' }),
+      L.tileLayer(${JSON.stringify(hybridLabelUrl)}, { maxZoom: MAX_ZOOM, maxNativeZoom: MAX_NATIVE_ZOOM, attribution: '&copy; Carto' })
     ])
   };
   if (typeof offlineStreetLayer !== 'undefined' && offlineStreetLayer) {
@@ -716,50 +846,6 @@ ${offlineStyleScript}
 `
     : '';
 
-  const layerFilterScript = showLayerFilter
-    ? `
-  (function () {
-    var panel = document.getElementById('layerFilter');
-    if (!panel) return;
-    var groups = {};
-    markerLayers.forEach(function (entry) {
-      var key = entry.groupKey || 'Lainnya';
-      if (!groups[key]) groups[key] = { color: entry.color, entries: [] };
-      groups[key].entries.push(entry);
-    });
-    var groupKeys = Object.keys(groups);
-    if (groupKeys.length === 0) return;
-    var title = document.createElement('div');
-    title.className = 'lf-title';
-    title.textContent = 'Jenis Infrastruktur';
-    panel.appendChild(title);
-    groupKeys.forEach(function (key) {
-      var group = groups[key];
-      var label = document.createElement('label');
-      var checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = true;
-      checkbox.addEventListener('change', function () {
-        group.entries.forEach(function (entry) {
-          var isOnMap = map.hasLayer(entry.layer);
-          if (checkbox.checked && !isOnMap) entry.layer.addTo(map);
-          if (!checkbox.checked && isOnMap) map.removeLayer(entry.layer);
-        });
-      });
-      var swatch = document.createElement('span');
-      swatch.className = 'lf-swatch';
-      swatch.style.background = group.color || '#ef4444';
-      var text = document.createElement('span');
-      text.textContent = key + ' (' + group.entries.length + ')';
-      label.appendChild(checkbox);
-      label.appendChild(swatch);
-      label.appendChild(text);
-      panel.appendChild(label);
-    });
-  })();
-`
-    : '';
-
   return `
   var TILE_DATA = ${tileDataJson};
   var MARKERS = ${markersJson};
@@ -769,6 +855,20 @@ ${offlineStyleScript}
   var MAX_ZOOM = ${maxZoomWithOvershoot};
   var SHOW_DRAWING_TOOLS = ${showDrawingTools};
   var ANNOTATIONS_EDITABLE = ${annotationsEditable};
+
+  // Helper diagnostik: kirim pesan debug (tipe 'map_debug') ke React Native
+  // (lihat handleWebViewMessage/processMapMessage di MapScreen.tsx) supaya
+  // kegagalan ASINKRON di dalam MapLibre GL/PMTiles (mis. mode "Peta
+  // Offline" tampak aktif tapi peta tetap kosong) terlihat lewat log
+  // Metro/console, bukan diam-diam gagal tanpa jejak. Aman dipanggil kapan
+  // pun; no-op jika ReactNativeWebView tidak tersedia (mis. web).
+  window.__debugMap = function (event, detail) {
+    try {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'map_debug', event: event, detail: detail }));
+      }
+    } catch (eDebug) {}
+  };
 
   var map = L.map('map', { zoomControl: true, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
 ${tileLayerScript}
@@ -795,12 +895,79 @@ ${switchModeScript}
   }
   window.addEventListener('resize', refreshMapSize);
 
+  // Anti-tumpuk label permanen: label (mis. "RT 05 RW 02 Drainase") hanya
+  // ditampilkan saat peta cukup diperbesar (zoom >= LABEL_MIN_ZOOM), supaya
+  // saat banyak titik/anotasi berdekatan pada zoom rendah, labelnya tidak
+  // saling menumpuk dan membuat peta susah dibaca. Pengguna tinggal
+  // memperbesar peta (pinch/tombol zoom) untuk melihat label satu per satu.
+  var LABEL_MIN_ZOOM = 17;
+  var labeledLayers = [];
+  function updateLabelVisibility() {
+    var show = map.getZoom() >= LABEL_MIN_ZOOM;
+    labeledLayers.forEach(function (layer) {
+      var tooltip = layer.getTooltip && layer.getTooltip();
+      if (!tooltip) return;
+      if (show) {
+        if (!layer.isTooltipOpen || !layer.isTooltipOpen()) layer.openTooltip();
+      } else {
+        if (layer.isTooltipOpen && layer.isTooltipOpen()) layer.closeTooltip();
+      }
+    });
+  }
+
+  // Anti-tumpuk POSISI label anotasi: dua label anotasi yang berdekatan
+  // (mis. dua garis Drainase yang berdampingan) bisa saling menutupi kalau
+  // dibiarkan begitu saja di titik jangkarnya masing-masing. Setelah label
+  // ditampilkan/peta digeser-zoom, setiap label diperiksa satu per satu
+  // (urut sesuai urutan anotasi dibuat); jika kotak labelnya bertumpuk
+  // dengan label lain yang sudah "ditempatkan", ia digeser sedikit ke
+  // bawah (lewat margin-top, tidak mengganggu transform posisi milik
+  // Leaflet sendiri) sampai tidak lagi bertumpuk. Dengan begitu label tetap
+  // menempel dekat garis/polygon aslinya, hanya bergeser seperlunya supaya
+  // tetap mudah dibaca.
+  function rectsOverlap(a, b) {
+    return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+  }
+  function resolveLabelCollisions() {
+    var openLayers = labeledLayers.filter(function (layer) {
+      return layer.isTooltipOpen && layer.isTooltipOpen() && layer.getTooltip() && layer.getTooltip()._container;
+    });
+    // Reset dulu semua geseran sebelumnya sebelum dihitung ulang.
+    openLayers.forEach(function (layer) {
+      layer.getTooltip()._container.style.marginTop = '0px';
+    });
+    var placedRects = [];
+    openLayers.forEach(function (layer) {
+      var el = layer.getTooltip()._container;
+      var rect = el.getBoundingClientRect();
+      var shift = 0;
+      var maxIter = 30;
+      while (maxIter-- > 0) {
+        var collided = false;
+        for (var i = 0; i < placedRects.length; i++) {
+          if (rectsOverlap(rect, placedRects[i])) { collided = true; break; }
+        }
+        if (!collided) break;
+        shift += rect.height + 4;
+        el.style.marginTop = shift + 'px';
+        rect = el.getBoundingClientRect();
+      }
+      placedRects.push(rect);
+    });
+  }
+  map.on('zoomend', function () {
+    updateLabelVisibility();
+    resolveLabelCollisions();
+  });
+  map.on('moveend', resolveLabelCollisions);
+
   var markerLayers = MARKERS.map(function (m) {
     var layer = L.circleMarker([m.lat, m.lng], {
       radius: 8, color: '#fff', weight: 2, fillColor: m.color, fillOpacity: 1,
     }).addTo(map).bindPopup(m.popupHtml);
     if (m.label) {
       layer.bindTooltip(m.label, { permanent: true, direction: 'top', offset: [0, -8], className: 'marker-label' });
+      labeledLayers.push(layer);
     }
     return { layer: layer, packageName: m.packageName || '', groupKey: m.groupKey || '', color: m.color };
   });
@@ -818,7 +985,6 @@ ${switchModeScript}
     }
   }
 ${searchScript}
-${layerFilterScript}
 
   function renderSavedAnnotation(a) {
     var latlngs = a.points.map(function (p) { return [p.lat, p.lng]; });
@@ -829,6 +995,7 @@ ${layerFilterScript}
     var label = a.label || (a.type === 'polygon' ? 'Polygon' : 'Garis');
     if (a.label) {
       layer.bindTooltip(a.label, { permanent: true, direction: 'center', className: 'marker-label' });
+      labeledLayers.push(layer);
     }
     var popupHtml = '<b>' + label + '</b><br/>';
     if (ANNOTATIONS_EDITABLE) {
@@ -838,6 +1005,8 @@ ${layerFilterScript}
     layer.bindPopup(popupHtml);
   }
   ANNOTATIONS.forEach(renderSavedAnnotation);
+  updateLabelVisibility();
+  setTimeout(resolveLabelCollisions, 100);
 
   window.__deleteAnnotation = function (id) {
     if (!ANNOTATIONS_EDITABLE) return;
@@ -869,10 +1038,15 @@ ${layerFilterScript}
     function setMapLocked(locked) {
       mapLocked = locked;
       if (locked) {
+        // PENTING: hanya kunci PANNING (geser peta), BUKAN zoom. Sebelumnya
+        // touchZoom/scrollWheelZoom juga dinonaktifkan saat mode gambar
+        // (Garis/Polygon) aktif, sehingga pengguna tidak bisa memperbesar
+        // peta untuk menempatkan titik dengan presisi — padahal saat
+        // menggambar garis/polygon, zoom justru sangat dibutuhkan agar titik
+        // demi titik bisa diketuk akurat. Geser peta tetap dikunci supaya
+        // peta tidak bergeser tak sengaja saat jari menyentuh untuk
+        // menambah titik.
         map.dragging.disable();
-        map.touchZoom.disable();
-        map.doubleClickZoom.disable();
-        map.scrollWheelZoom.disable();
         if (map.tap) map.tap.disable();
         btnLock.textContent = '🔒 Peta Terkunci';
         btnLock.className = 'active';
@@ -1021,9 +1195,14 @@ export function buildPickerMapHtml(opts: BuildPickerMapHtmlOptions): string {
   const satelliteUrl = CONFIG.ONLINE_MAP_MODES.satellite.tileUrlTemplate;
   const labelUrl = CONFIG.ONLINE_MAP_MODES.hybrid.labelTileUrlTemplate;
   const pickerMaxZoom = opts.maxOnlineZoom ?? 19;
+  // Sama seperti di buildScript(): Esri World_Imagery mengembalikan tile
+  // watermark "Map data not yet available..." (bukan error) jika diminta
+  // melebihi resolusi asli citranya di area ini; batasi maxNativeZoom agar
+  // Leaflet meng-upscale tile terakhir alih-alih menampilkan watermark.
+  const pickerSatelliteMaxNativeZoom = Math.min(pickerMaxZoom, 18);
   const baseLayers = `
     var streetLayer = L.tileLayer(${JSON.stringify(streetUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Carto' });
-    var satelliteLayer = L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Esri' });
+    var satelliteLayer = L.tileLayer(${JSON.stringify(satelliteUrl)}, { maxZoom: ${pickerMaxZoom}, maxNativeZoom: ${pickerSatelliteMaxNativeZoom}, attribution: '&copy; Esri' });
     var labelLayer = L.tileLayer(${JSON.stringify(labelUrl)}, { maxZoom: ${pickerMaxZoom}, attribution: '&copy; Carto' });
     var modeLayers = {
       street: streetLayer,

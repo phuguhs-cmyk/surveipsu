@@ -33,7 +33,7 @@ function SketchPadWeb({ visible, onSave, onClose }: Props) {
   const [annotation, setAnnotation] = useState('');
   const [annotationX, setAnnotationX] = useState(28);
   const [annotationY, setAnnotationY] = useState(28);
-  const [annotations, setAnnotations] = useState<Array<{ value: string; x: number; y: number }>>([]);
+  const [annotations, setAnnotations] = useState<{ value: string; x: number; y: number }[]>([]);
   const [mode, setMode] = useState<'draw' | 'text'>('draw');
   const [color, setColor] = useState('#ef4444');
   const [pendingTextPoint, setPendingTextPoint] = useState<Point | null>(null);
@@ -222,7 +222,7 @@ function SketchPadNative({ visible, onSave, onClose }: Props) {
   const [mode, setMode] = useState<'draw' | 'text'>('draw');
   const [color, setColor] = useState('#ef4444');
   const [annotation, setAnnotation] = useState('');
-  const [annotations, setAnnotations] = useState<Array<{ value: string; x: number; y: number }>>([]);
+  const [annotations, setAnnotations] = useState<{ value: string; x: number; y: number }[]>([]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [pendingTextPoint, setPendingTextPoint] = useState<Point | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
